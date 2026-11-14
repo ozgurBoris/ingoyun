@@ -613,25 +613,56 @@ class IngoGame {
         this.dom.targetWordLetters.innerHTML = '';
         this.targetLetterEls = [];
         const frag = document.createDocumentFragment();
-        const letters = this.cleanWord.split('');
-        for (let i = 0; i < letters.length; i++) {
-            const span = document.createElement('span');
-            span.className = 'target-letter';
-            span.dataset.index = i;
-            span.textContent = letters[i];
-            this.targetLetterEls.push(span);
-            frag.appendChild(span);
-        }
-        this.dom.targetWordLetters.appendChild(frag);
+        const posText = this.currentWord.pos ? `(${this.currentWord.pos})` : '';
 
-        const posText = this.currentWord.pos ? `(${this.currentWord.pos}) ` : '';
         if (this.isPractice) {
-            // Alıştırma Mode: show ONLY the English word underneath (do NOT write Turkish here!)
-            this.dom.wordTrMeaning.textContent = `${posText}= ${this.currentWord.displayWord || this.currentWord.word}`;
+            // Alıştırma Mode: Big white area shows ONLY the English word (e.g. T R I F L I N G); user drags Turkish on grid!
+            const engText = (this.currentWord.displayWord || this.currentWord.word || '').toUpperCase();
+            for (let i = 0; i < engText.length; i++) {
+                const ch = engText[i];
+                const span = document.createElement('span');
+                span.className = 'target-letter';
+                if (ch === ' ') {
+                    span.innerHTML = '&nbsp;';
+                    span.style.minWidth = '10px';
+                } else {
+                    span.textContent = ch;
+                }
+                this.targetLetterEls.push(span);
+                frag.appendChild(span);
+            }
+            this.dom.targetWordLetters.appendChild(frag);
+            // Yellow line underneath keeps ONLY "(adj)" etc.
+            this.dom.wordTrMeaning.textContent = posText;
         } else {
-            // Normal Mode: show Turkish meaning underneath
-            this.dom.wordTrMeaning.textContent = `${posText}= ${this.currentWord.meaning || ''}`;
+            // Normal Mode: Big white area shows English letters, yellow line shows Turkish meaning
+            const letters = this.cleanWord.split('');
+            for (let i = 0; i < letters.length; i++) {
+                const span = document.createElement('span');
+                span.className = 'target-letter';
+                span.dataset.index = i;
+                span.textContent = letters[i];
+                this.targetLetterEls.push(span);
+                frag.appendChild(span);
+            }
+            this.dom.targetWordLetters.appendChild(frag);
+            this.dom.wordTrMeaning.textContent = `${posText ? posText + ' ' : ''}= ${this.currentWord.meaning || ''}`;
         }
+    }
+
+    updatePracticeTypedUI() {
+        if (!this.isPractice || !this.currentWord || !this.dom.wordTrMeaning) return;
+        const posText = this.currentWord.pos ? `(${this.currentWord.pos})` : '';
+        if (this.selectedPath.length === 0) {
+            this.dom.wordTrMeaning.textContent = posText;
+            return;
+        }
+        let typed = '';
+        for (let i = 0; i < this.selectedPath.length; i++) {
+            const [r, c] = this.selectedPath[i];
+            typed += this.grid[r][c];
+        }
+        this.dom.wordTrMeaning.textContent = posText ? `${posText}  ${typed}` : typed;
     }
 
     // Generate fresh randomized 5x5 board layout (Orthogonal only: Up, Down, Left, Right)
@@ -1005,16 +1036,25 @@ class IngoGame {
             cellEl.classList.remove('hint-highlight');
         }
 
-        // Highlight matching letter at top (direct array lookup, 0 querySelector)
+        // Highlight matching letter at top (Normal mode highlights by index; Alıştırma updates typed Turkish preview)
         const step = this.selectedPath.length - 1;
-        const letterEl = this.targetLetterEls && this.targetLetterEls[step];
-        if (letterEl) letterEl.classList.add('matched');
+        if (this.isPractice) {
+            this.updatePracticeTypedUI();
+        } else {
+            const letterEl = this.targetLetterEls && this.targetLetterEls[step];
+            if (letterEl) letterEl.classList.add('matched');
+        }
 
         // Play pop sound with pitch increasing with step
         if (window.sounds) window.sounds.playPop(step);
 
         // Check if full word completed!
         if (this.selectedPath.length === this.cleanWord.length) {
+            if (this.isPractice && this.targetLetterEls) {
+                for (let i = 0; i < this.targetLetterEls.length; i++) {
+                    this.targetLetterEls[i].classList.add('matched');
+                }
+            }
             this.handleWordSolved();
         }
     }
@@ -1027,8 +1067,12 @@ class IngoGame {
         if (cellEl) cellEl.classList.remove('selected');
 
         const step = this.selectedPath.length;
-        const letterEl = this.targetLetterEls && this.targetLetterEls[step];
-        if (letterEl) letterEl.classList.remove('matched');
+        if (this.isPractice) {
+            this.updatePracticeTypedUI();
+        } else {
+            const letterEl = this.targetLetterEls && this.targetLetterEls[step];
+            if (letterEl) letterEl.classList.remove('matched');
+        }
 
         this.lastVisitedCell = this.selectedPath.length > 0 ? this.selectedPath[this.selectedPath.length - 1] : null;
         if (window.sounds) window.sounds.playPop(Math.max(0, this.selectedPath.length - 1));
@@ -1049,6 +1093,9 @@ class IngoGame {
             for (let i = 0; i < this.targetLetterEls.length; i++) {
                 this.targetLetterEls[i].classList.remove('matched');
             }
+        }
+        if (this.isPractice) {
+            this.updatePracticeTypedUI();
         }
     }
 
@@ -1383,8 +1430,27 @@ class IngoGame {
 
     renderLevelGrid() {
         const grid = this.dom.levelGrid;
+        const prevScroll = grid.scrollTop;
         grid.innerHTML = '';
         const frag = document.createDocumentFragment();
+        if (!this.lockedTapCounts) this.lockedTapCounts = {};
+
+        const handleLockedTap = (dayNum) => {
+            const nextCount = (this.lockedTapCounts[dayNum] || 0) + 1;
+            this.lockedTapCounts[dayNum] = nextCount;
+
+            if (nextCount >= 3) {
+                delete this.lockedTapCounts[dayNum];
+                if (!this.unlockedDays.includes(dayNum)) {
+                    this.unlockedDays.push(dayNum);
+                    this.saveState();
+                }
+                if (window.sounds) window.sounds.playCoin();
+                this.renderLevelGrid();
+            } else {
+                if (window.sounds) window.sounds.playPop(nextCount - 1);
+            }
+        };
 
         const formatStars = (stars, defaultLabel) => {
             if (stars === 3) return '⭐⭐⭐';
@@ -1410,6 +1476,8 @@ class IngoGame {
                     this.dom.levelSelectModal.classList.remove('active');
                     this.loadDay(d, false, false);
                 });
+            } else {
+                btnNormal.addEventListener('click', () => handleLockedTap(d));
             }
             frag.appendChild(btnNormal);
 
@@ -1427,11 +1495,14 @@ class IngoGame {
                     this.dom.levelSelectModal.classList.remove('active');
                     this.loadDay(d, false, true);
                 });
+            } else {
+                btnPractice.addEventListener('click', () => handleLockedTap(d));
             }
             frag.appendChild(btnPractice);
         }
 
         grid.appendChild(frag);
+        grid.scrollTop = prevScroll;
     }
 
     showDictionaryModal() {
