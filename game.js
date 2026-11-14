@@ -58,6 +58,13 @@ class IngoGame {
         this.timerRemaining = 25;
         this.timerInterval = null;
         this.isPaused = false;
+        this.isSolving = false;
+        this.isInitialLoad = true;
+        this.boardBuilt = false;
+        this.cellPool = [];
+        this.cellCenters = [];
+        this.lastEyeTime = 0;
+        this.lastDisplayedSec = null;
 
         this.initStorage();
         this.bindDOM();
@@ -338,7 +345,6 @@ class IngoGame {
         let lastMoveEvent = null;
 
         gridEl.addEventListener('pointermove', (e) => {
-            this.scheduleEyeTracking(e.clientX, e.clientY);
             if (!this.isPointerDown || this.isPaused || this.isSolving) return;
             lastMoveEvent = e;
 
@@ -517,9 +523,21 @@ class IngoGame {
         this.renderBoard();
         this.resetTimer();
 
-        // Auto pronounce word on load if speech enabled
+        // Auto pronounce word on load if speech enabled (delayed slightly on cold start so frame 1 stays fluid)
         if (this.settings.speech && window.sounds) {
-            window.sounds.speak(this.currentWord.displayWord || this.currentWord.word);
+            const wText = this.currentWord.displayWord || this.currentWord.word;
+            if (this.isInitialLoad) {
+                this.isInitialLoad = false;
+                setTimeout(() => {
+                    if (this.settings.speech && window.sounds && !this.isPaused) {
+                        window.sounds.speak(wText);
+                    }
+                }, 500);
+            } else {
+                window.sounds.speak(wText);
+            }
+        } else {
+            this.isInitialLoad = false;
         }
     }
 
@@ -641,55 +659,62 @@ class IngoGame {
         }
     }
 
-    // Render 5x5 SVG Blob Board
+    // Render 5x5 SVG Blob Board (build persistent 25-cell DOM pool once, then update classes/letters in place)
     renderBoard() {
         const gridEl = this.dom.grid;
-        gridEl.innerHTML = '';
         // Dynamically rotate through the 15 themes on every word!
         const themeIndex = (this.wordIndex + (this.currentRound - 1) * 4) % this.themes.length;
         const themeClass = this.themes[themeIndex];
 
-        for (let r = 0; r < 5; r++) {
-            for (let c = 0; c < 5; c++) {
-                const char = this.grid[r][c];
-                const cell = document.createElement('div');
-                cell.className = `blob-cell ${themeClass}`;
-                cell.dataset.row = r;
-                cell.dataset.col = c;
-                cell.id = `cell-${r}-${c}`;
+        if (!this.boardBuilt) {
+            gridEl.innerHTML = '';
+            this.cellPool = [];
 
-                cell.innerHTML = `
-                    <svg viewBox="0 0 100 95" class="blob-svg">
-                        <!-- Blob Pou Gumdrop Body -->
-                        <path class="blob-body" d="M 50,12 C 72,12 87,32 95,62 C 99,80 92,92 50,92 C 8,92 1,80 5,62 C 13,32 28,12 50,12 Z" />
-                        <!-- Left Eye -->
-                        <ellipse cx="38" cy="28" rx="8" ry="10" fill="#ffffff" stroke="#181a19" stroke-width="2.6" />
-                        <g class="blob-pupil blob-pupil-left" transform="translate(1.8, -1.2)">
-                            <circle cx="38" cy="28" r="3.4" fill="#181a19" />
-                            <circle cx="39.5" cy="26.5" r="1.1" fill="#ffffff" />
-                        </g>
-                        <!-- Right Eye -->
-                        <ellipse cx="58" cy="28" rx="8" ry="10" fill="#ffffff" stroke="#181a19" stroke-width="2.6" />
-                        <g class="blob-pupil blob-pupil-right" transform="translate(1.8, -1.2)">
-                            <circle cx="58" cy="28" r="3.4" fill="#181a19" />
-                            <circle cx="59.5" cy="26.5" r="1.1" fill="#ffffff" />
-                        </g>
-                        <!-- Smirk Mouth -->
-                        <path d="M 23,43 Q 26,47 28,42" fill="none" stroke="#181a19" stroke-width="2.6" stroke-linecap="round" />
-                        <!-- Letter on belly -->
-                        <text class="blob-letter" x="50" y="74" text-anchor="middle" dominant-baseline="central">${char}</text>
-                    </svg>
-                `;
+            const template = document.createElement('template');
+            template.innerHTML = `
+                <svg viewBox="0 0 100 100" class="blob-svg" aria-hidden="true">
+                    <path class="blob-body" d="M 50,14.5 C 72,14.5 87,34.5 95,64.5 C 99,82.5 92,94.5 50,94.5 C 8,94.5 1,82.5 5,64.5 C 13,34.5 28,14.5 50,14.5 Z" />
+                    <ellipse cx="38" cy="30.5" rx="8" ry="10" fill="#ffffff" stroke="#181a19" stroke-width="2.6" />
+                    <ellipse cx="58" cy="30.5" rx="8" ry="10" fill="#ffffff" stroke="#181a19" stroke-width="2.6" />
+                    <path d="M 23,45.5 Q 26,49.5 28,44.5" fill="none" stroke="#181a19" stroke-width="2.6" stroke-linecap="round" />
+                    <text class="blob-letter" x="50" y="76.5" text-anchor="middle" dominant-baseline="central"></text>
+                </svg>
+                <div class="blob-pupils">
+                    <span class="pupil pupil-left"></span>
+                    <span class="pupil pupil-right"></span>
+                </div>
+            `;
 
-                gridEl.appendChild(cell);
+            const fragment = document.createDocumentFragment();
+            for (let r = 0; r < 5; r++) {
+                for (let c = 0; c < 5; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = `blob-cell ${themeClass}`;
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.id = `cell-${r}-${c}`;
+                    cell.appendChild(template.content.cloneNode(true));
+
+                    const letterEl = cell.querySelector('.blob-letter');
+                    const pupilsEl = cell.querySelector('.blob-pupils');
+                    letterEl.textContent = this.grid[r][c];
+
+                    this.cellPool.push({ r, c, cell, letterEl, pupilsEl, lastT: '' });
+                    fragment.appendChild(cell);
+                }
+            }
+            gridEl.appendChild(fragment);
+            this.boardBuilt = true;
+
+            // Measure grid rect cleanly once layout settles on initial paint
+            requestAnimationFrame(() => this.updateCellCenters());
+        } else {
+            for (let i = 0; i < 25; i++) {
+                const entry = this.cellPool[i];
+                entry.cell.className = `blob-cell ${themeClass}`;
+                entry.letterEl.textContent = this.grid[entry.r][entry.c];
             }
         }
-
-        // Cache eye centers for fast mouse/finger tracking
-        this.updateCellCenters();
-        setTimeout(() => {
-            this.updateCellCenters();
-        }, 50);
     }
 
     scheduleEyeTracking(x, y) {
@@ -698,36 +723,48 @@ class IngoGame {
         this.lastEyeY = y;
         if (!this.eyeRafPending) {
             this.eyeRafPending = true;
-            requestAnimationFrame(() => {
+            requestAnimationFrame((now) => {
                 this.eyeRafPending = false;
+                if (now - this.lastEyeTime < 24) return;
+                this.lastEyeTime = now;
                 this.trackEyes(this.lastEyeX, this.lastEyeY);
             });
         }
     }
 
     resetEyes() {
-        if (!this.cellCenters) return;
-        for (let i = 0; i < this.cellCenters.length; i++) {
-            const item = this.cellCenters[i];
-            if (item.leftPupil) item.leftPupil.setAttribute('transform', 'translate(1.8, -1.2)');
-            if (item.rightPupil) item.rightPupil.setAttribute('transform', 'translate(1.8, -1.2)');
+        const defaultT = 'translate3d(1.8%, -1.2%, 0)';
+        for (let i = 0; i < this.cellPool.length; i++) {
+            const item = this.cellPool[i];
+            if (item.pupilsEl && item.lastT !== defaultT) {
+                item.lastT = defaultT;
+                item.pupilsEl.style.transform = defaultT;
+            }
         }
     }
 
     updateCellCenters() {
+        const gridEl = this.dom.grid;
+        if (!gridEl) return;
+        const rect = gridEl.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        // Single grid rect read instead of 25 separate getBoundingClientRect() calls (zero layout thrashing)
+        const gap = 6;
+        const cw = (rect.width - gap * 4) / 5;
+        const ch = (rect.height - gap * 4) / 5;
+        const stepX = cw + gap;
+        const stepY = ch + gap;
+
         this.cellCenters = [];
-        const cells = this.dom.grid.querySelectorAll('.blob-cell');
-        cells.forEach(cell => {
-            const rect = cell.getBoundingClientRect();
-            const leftPupil = cell.querySelector('.blob-pupil-left');
-            const rightPupil = cell.querySelector('.blob-pupil-right');
+        for (let i = 0; i < this.cellPool.length; i++) {
+            const entry = this.cellPool[i];
             this.cellCenters.push({
-                cx: rect.left + rect.width / 2,
-                cy: rect.top + rect.height * 0.32,
-                leftPupil,
-                rightPupil
+                cx: rect.left + entry.c * stepX + cw * 0.5,
+                cy: rect.top + entry.r * stepY + ch * 0.305,
+                entry
             });
-        });
+        }
     }
 
     trackEyes(mouseX, mouseY) {
@@ -736,25 +773,29 @@ class IngoGame {
             if (!this.cellCenters || this.cellCenters.length === 0) return;
         }
 
-        const maxOffset = 4.2;
+        const maxOffset = 4.0;
         const len = this.cellCenters.length;
 
         for (let i = 0; i < len; i++) {
             const item = this.cellCenters[i];
-            if (!item.leftPupil || !item.rightPupil) continue;
+            const pupilsEl = item.entry.pupilsEl;
+            if (!pupilsEl) continue;
 
             const dx = mouseX - item.cx;
             const dy = mouseY - item.cy;
-            const dist = Math.hypot(dx, dy);
-            if (dist < 1) continue;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < 1) continue;
 
+            const dist = Math.sqrt(distSq);
             const scale = (dist < 30) ? (dist / 30) : 1.0;
-            const offsetX = ((dx / dist) * maxOffset * scale).toFixed(1);
-            const offsetY = ((dy / dist) * maxOffset * scale).toFixed(1);
+            const offsetX = Math.round(((dx / dist) * maxOffset * scale) * 2) / 2;
+            const offsetY = Math.round(((dy / dist) * maxOffset * scale) * 2) / 2;
 
-            const transformStr = `translate(${offsetX}, ${offsetY})`;
-            item.leftPupil.setAttribute('transform', transformStr);
-            item.rightPupil.setAttribute('transform', transformStr);
+            const transformStr = `translate3d(${offsetX}%, ${offsetY}%, 0)`;
+            if (item.entry.lastT !== transformStr) {
+                item.entry.lastT = transformStr;
+                pupilsEl.style.transform = transformStr;
+            }
         }
     }
 
@@ -1064,7 +1105,11 @@ class IngoGame {
     updateTimerDisplay() {
         const ratio = Math.max(0, (this.timerRemaining / this.timerMaxSeconds));
         this.dom.timerFill.style.transform = `scaleX(${ratio})`;
-        this.dom.timerSublabel.textContent = `${Math.ceil(this.timerRemaining)} sn`;
+        const sec = Math.ceil(this.timerRemaining);
+        if (sec !== this.lastDisplayedSec) {
+            this.lastDisplayedSec = sec;
+            this.dom.timerSublabel.textContent = `${sec} sn`;
+        }
     }
 
     stopTimer() {

@@ -173,6 +173,7 @@ body {
     position: relative;
     overflow: hidden;
     margin-bottom: 6px;
+    contain: layout style paint;
 }
 
 .timer-fill {
@@ -296,8 +297,10 @@ body {
     transition: transform 0.12s ease;
 }
 
-.blob-cell:hover {
-    transform: scale(1.04);
+@media (hover: hover) {
+    .blob-cell:hover {
+        transform: scale(1.04);
+    }
 }
 
 .blob-cell.selected {
@@ -314,7 +317,7 @@ body {
 }
 
 .blob-cell.hint-highlight .blob-body {
-    filter: drop-shadow(0 0 12px #ffe600) drop-shadow(0 0 6px #ff9900) !important;
+    filter: drop-shadow(0 0 10px #ffe600);
     animation: hintPulse 1s infinite alternate;
 }
 
@@ -341,16 +344,49 @@ body {
     height: 100%;
     overflow: visible;
     pointer-events: none;
-    transform: translateZ(0);
 }
 
-.blob-pupil {
+/* Lightweight HTML Pupil Overlay (prevents SVG re-rasterization during eye tracking) */
+.blob-pupils {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transform: translate3d(1.8%, -1.2%, 0);
+}
+
+.pupil {
+    position: absolute;
+    top: 30.5%;
+    width: 7%;
+    height: 7%;
+    margin-left: -3.5%;
+    margin-top: -3.5%;
+    background: #181a19;
+    border-radius: 50%;
     pointer-events: none;
 }
 
+.pupil::after {
+    content: '';
+    position: absolute;
+    top: 18%;
+    right: 18%;
+    width: 34%;
+    height: 34%;
+    background: #ffffff;
+    border-radius: 50%;
+}
+
+.pupil-left {
+    left: 38%;
+}
+
+.pupil-right {
+    left: 58%;
+}
+
 .blob-cell {
-    will-change: transform;
-    transform: translateZ(0);
+    contain: layout style;
     -webkit-tap-highlight-color: transparent;
 }
 
@@ -460,8 +496,7 @@ body {
 .modal-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(10, 14, 12, 0.85);
-    backdrop-filter: blur(5px);
+    background: rgba(10, 14, 12, 0.9);
     display: flex;
     align-items: center;
     justify-content: center;

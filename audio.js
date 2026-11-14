@@ -5,7 +5,9 @@ class SoundManager {
         this.soundEnabled = true;
         this.speechEnabled = true;
         this.voices = [];
-        this.initSpeech();
+        this._speechInited = false;
+        // Defer TTS engine voice query so cold start renders immediately without binder IPC stall
+        setTimeout(() => this.initSpeech(), 1200);
     }
 
     initContext() {
@@ -21,19 +23,24 @@ class SoundManager {
     }
 
     initSpeech() {
+        if (this._speechInited) return;
+        this._speechInited = true;
         if ('speechSynthesis' in window) {
-            const loadVoices = () => {
-                this.voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
-            };
-            loadVoices();
-            if (window.speechSynthesis.onvoiceschanged !== undefined) {
-                window.speechSynthesis.onvoiceschanged = loadVoices;
-            }
+            try {
+                const loadVoices = () => {
+                    this.voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+                };
+                loadVoices();
+                if (window.speechSynthesis.onvoiceschanged !== undefined) {
+                    window.speechSynthesis.onvoiceschanged = loadVoices;
+                }
+            } catch (e) {}
         }
     }
 
     speak(word) {
         if (!this.speechEnabled || !('speechSynthesis' in window) || !word) return;
+        if (!this._speechInited) this.initSpeech();
         try {
             if (this._speakTimer) clearTimeout(this._speakTimer);
             window.speechSynthesis.cancel();
