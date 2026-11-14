@@ -345,6 +345,8 @@ class IngoGame {
         gridEl.addEventListener('pointerdown', (e) => {
             const cellEl = e.target.closest('.blob-cell');
             if (!cellEl || this.isPaused || this.isSolving) return;
+            // Always refresh exact gridRect at finger-down so font load, wrapped target word, or mobile URL bar never skews pointermove!
+            this.updateCellCenters();
             this.scheduleEyeTracking(e.clientX, e.clientY);
             try { gridEl.setPointerCapture(e.pointerId); } catch (err) {}
             this.isPointerDown = true;
@@ -376,16 +378,27 @@ class IngoGame {
                     const relY = lastMoveY - rect.top;
                     if (relX < 0 || relY < 0 || relX >= rect.width || relY >= rect.height) return;
 
-                    const cellW = rect.width / 5;
-                    const cellH = rect.height / 5;
-                    const c = Math.floor(relX / cellW);
-                    const r = Math.floor(relY / cellH);
-                    if (r < 0 || r >= 5 || c < 0 || c >= 5) return;
+                    // Exact 5x5 grid with 6px gap: divide cleanly by cell pitch without artificial deadzone!
+                    const gap = 6;
+                    const cw = (rect.width - gap * 4) / 5;
+                    const ch = (rect.height - gap * 4) / 5;
+                    const stepX = cw + gap;
+                    const stepY = ch + gap;
+                    const c = Math.min(4, Math.max(0, Math.floor(relX / stepX)));
+                    const r = Math.min(4, Math.max(0, Math.floor(relY / stepY)));
 
-                    // 10% edge deadzone to avoid accidental corner grazes while dragging
-                    const inX = (relX - c * cellW) / cellW;
-                    const inY = (relY - r * cellH) / cellH;
-                    if (inX < 0.10 || inX > 0.90 || inY < 0.10 || inY > 0.90) return;
+                    // Only exclude tiny 5% outer corners when moving diagonally so orthogonal slides are 100% instant
+                    const inX = (relX - c * stepX) / cw;
+                    const inY = (relY - r * stepY) / ch;
+                    if (this.lastVisitedCell) {
+                        const dr = Math.abs(r - this.lastVisitedCell[0]);
+                        const dc = Math.abs(c - this.lastVisitedCell[1]);
+                        if (dr === 1 && dc === 1) {
+                            return; // Ignore diagonal cells cleanly
+                        }
+                    } else if (inX > 1.05 || inY > 1.05) {
+                        return;
+                    }
 
                     if (this.lastPointerCell && this.lastPointerCell[0] === r && this.lastPointerCell[1] === c) {
                         return;
@@ -666,7 +679,7 @@ class IngoGame {
     }
 
     // Generate fresh randomized 5x5 board layout (Orthogonal only: Up, Down, Left, Right)
-    // Flowing paths: straight lines, clean L-shapes, and wide S/Z sweeps without tight U-turns/clumping
+    // Balanced mix of straight lines, L-turns, and natural curves
     generateBoardLayout() {
         const L = this.cleanWord.length;
         const dirs = [
@@ -676,21 +689,20 @@ class IngoGame {
             [0, 1]   // Right
         ];
 
-        // Choose a straightness momentum for this word so short words often go straight or make 1 clean L-turn
-        let targetStraightProb = 0.72;
+        let targetStraightProb = 0.62;
         if (L <= 5) {
             const roll = Math.random();
-            if (roll < 0.32) targetStraightProb = 0.96;      // Pure straight line across row/col
-            else if (roll < 0.78) targetStraightProb = 0.74; // Clean L-turn
-            else targetStraightProb = 0.50;                  // Wide Z / stair shape
+            if (roll < 0.25) targetStraightProb = 0.94;      // Occasional straight line
+            else if (roll < 0.65) targetStraightProb = 0.68; // L-turn / step
+            else targetStraightProb = 0.42;                  // Playful curve
         } else {
-            targetStraightProb = 0.62 + Math.random() * 0.22;
+            targetStraightProb = 0.55 + Math.random() * 0.25;
         }
 
         let bestPath = null;
         let bestScore = -999999;
 
-        for (let attempt = 0; attempt < 45; attempt++) {
+        for (let attempt = 0; attempt < 30; attempt++) {
             const startR = Math.floor(Math.random() * 5);
             const startC = Math.floor(Math.random() * 5);
             const path = [[startR, startC]];
@@ -724,12 +736,12 @@ class IngoGame {
                     const nc = c + dc;
                     const idx = nr * 5 + nc;
                     if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && !visited.has(idx)) {
-                        // vTouch === 1 means ONLY the current cell touches (nr, nc) -> zero tight U-turns or folding back!
+                        // Gentle preference against excessive clumping, while still allowing natural adjacent curves
                         const vTouch = countVisitedNeighbors(nr, nc);
                         const isSameDir = (dr === prevDr && dc === prevDc);
-                        const clumpPenalty = (vTouch - 1) * 12;
-                        const dirScore = (step > 1 && isSameDir === wantStraight) ? 0 : 2.2;
-                        const priority = clumpPenalty + dirScore + Math.random();
+                        const clumpPenalty = (vTouch - 1) * 2.5;
+                        const dirScore = (step > 1 && isSameDir === wantStraight) ? 0 : 1.8;
+                        const priority = clumpPenalty + dirScore + Math.random() * 1.4;
                         candidates.push({ nr, nc, dr, dc, idx, priority });
                     }
                 }
@@ -748,7 +760,6 @@ class IngoGame {
             };
 
             if (dfs(startR, startC, 1, 0, 0)) {
-                // Score candidate path by spread (bounding box span) and zero self-touching clumps
                 let minR = 5, maxR = -1, minC = 5, maxC = -1;
                 for (let i = 0; i < path.length; i++) {
                     const pr = path[i][0], pc = path[i][1];
@@ -767,12 +778,12 @@ class IngoGame {
                     }
                 }
 
-                const score = span * 5 - clumps * 20;
+                const score = span * 3 - clumps * 4 + Math.random() * 4;
                 if (score > bestScore) {
                     bestScore = score;
                     bestPath = path.map(pt => [pt[0], pt[1]]);
                 }
-                if (clumps === 0 && span >= Math.min(6, L + 1)) {
+                if (attempt >= 8 && span >= Math.min(5, L)) {
                     break;
                 }
             }
@@ -803,31 +814,14 @@ class IngoGame {
             this.grid[r][c] = this.cleanWord[i];
         }
 
-        // Fill remaining empty cells with weighted random distractor letters (avoiding identical adjacent letters)
+        // Fill remaining empty cells with natural weighted random distractor letters
         const letterPool = this.isPractice
             ? "AAAAAEEEEİİİIIIOOOUUUÜÜÖÖKKKLLLMMNNNRRRSSŞŞTTTÇÇĞĞBBCCDDGGHHPPVVYYZZ"
             : "EEEEEEAAAATOOOIINNNSSSHHRRDDLLCCUUMMWWFFGGYYPPBBVK";
         for (let r = 0; r < 5; r++) {
             for (let c = 0; c < 5; c++) {
                 if (this.grid[r][c] === null) {
-                    let randChar = letterPool[Math.floor(Math.random() * letterPool.length)];
-                    for (let tries = 0; tries < 8; tries++) {
-                        const candidate = letterPool[Math.floor(Math.random() * letterPool.length)];
-                        let conflict = false;
-                        for (let d = 0; d < 4; d++) {
-                            const nr = r + dirs[d][0];
-                            const nc = c + dirs[d][1];
-                            if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && this.grid[nr][nc] === candidate) {
-                                conflict = true;
-                                break;
-                            }
-                        }
-                        if (!conflict) {
-                            randChar = candidate;
-                            break;
-                        }
-                    }
-                    this.grid[r][c] = randChar;
+                    this.grid[r][c] = letterPool[Math.floor(Math.random() * letterPool.length)];
                 }
             }
         }
