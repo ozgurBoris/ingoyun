@@ -35,19 +35,23 @@ class SoundManager {
     speak(word) {
         if (!this.speechEnabled || !('speechSynthesis' in window) || !word) return;
         try {
+            if (this._speakTimer) clearTimeout(this._speakTimer);
             window.speechSynthesis.cancel();
-            // clean word for pronunciation (remove brackets, slashes)
             const clean = word.replace(/\([^\)]*\)/g, '').replace(/[^a-zA-Z\s]/g, '').trim();
-            const utterance = new SpeechSynthesisUtterance(clean);
-            utterance.lang = 'en-US';
-            utterance.rate = 0.85;
-            utterance.pitch = 1.0;
-            if (this.voices.length > 0) {
-                // prefer Google US English or Samantha / Natural
-                const preferred = this.voices.find(v => v.name.includes('Natural') || v.name.includes('Google') || v.lang === 'en-US');
-                if (preferred) utterance.voice = preferred;
-            }
-            window.speechSynthesis.speak(utterance);
+            if (!clean) return;
+            this._speakTimer = setTimeout(() => {
+                try {
+                    const utterance = new SpeechSynthesisUtterance(clean);
+                    utterance.lang = 'en-US';
+                    utterance.rate = 0.85;
+                    utterance.pitch = 1.0;
+                    if (this.voices.length > 0) {
+                        const preferred = this.voices.find(v => v.name.includes('Natural') || v.name.includes('Google') || v.lang === 'en-US');
+                        if (preferred) utterance.voice = preferred;
+                    }
+                    window.speechSynthesis.speak(utterance);
+                } catch (err) {}
+            }, 30);
         } catch (e) {
             console.warn('TTS error:', e);
         }

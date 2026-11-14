@@ -175,6 +175,11 @@ class IngoGame {
             pauseRestartBtn: document.getElementById('pause-restart-btn'),
             pauseLevelMenuBtn: document.getElementById('pause-level-menu-btn'),
 
+            timeoutModal: document.getElementById('timeout-modal'),
+            timeoutModalWord: document.getElementById('timeout-modal-word'),
+            timeoutRetryBtn: document.getElementById('timeout-retry-btn'),
+            timeoutNextBtn: document.getElementById('timeout-next-btn'),
+
             levelSelectModal: document.getElementById('level-select-modal'),
             levelGrid: document.getElementById('level-grid'),
             levelSelectCloseBtn: document.getElementById('level-select-close-btn'),
@@ -202,12 +207,37 @@ class IngoGame {
         this.dom.pauseResumeBtn.addEventListener('click', () => this.hidePauseModal());
         this.dom.pauseRestartBtn.addEventListener('click', () => {
             this.hidePauseModal();
-            this.startRound(1);
+            this.savedRoundWordIds = null;
+            this.isPaused = false;
+            this.isSolving = false;
+            this.startRound(1, 0);
         });
         this.dom.pauseLevelMenuBtn.addEventListener('click', () => {
             this.hidePauseModal();
             this.showLevelSelectModal();
         });
+
+        // Timeout Modal buttons
+        if (this.dom.timeoutRetryBtn) {
+            this.dom.timeoutRetryBtn.addEventListener('click', () => {
+                this.dom.timeoutModal.classList.remove('active');
+                this.isPaused = false;
+                this.isSolving = false;
+                this.isPointerDown = false;
+                this.resetSelection();
+                this.resetTimer();
+            });
+        }
+        if (this.dom.timeoutNextBtn) {
+            this.dom.timeoutNextBtn.addEventListener('click', () => {
+                this.dom.timeoutModal.classList.remove('active');
+                this.isPaused = false;
+                this.isSolving = false;
+                this.isPointerDown = false;
+                this.resetSelection();
+                this.nextWord();
+            });
+        }
 
         // Settings toggles
         if (this.dom.settingSound) {
@@ -230,7 +260,7 @@ class IngoGame {
                 this.saveState();
                 if (!this.settings.timer) {
                     this.stopTimer();
-                    this.dom.timerFill.style.width = '100%';
+                    this.dom.timerFill.style.transform = 'scaleX(1)';
                     this.dom.timerSublabel.textContent = 'Rahat Mod (Süresiz)';
                 } else {
                     this.resetTimer();
@@ -295,8 +325,9 @@ class IngoGame {
 
         gridEl.addEventListener('pointerdown', (e) => {
             const cellEl = e.target.closest('.blob-cell');
-            if (!cellEl || this.isPaused) return;
-            gridEl.setPointerCapture(e.pointerId);
+            if (!cellEl || this.isPaused || this.isSolving) return;
+            this.scheduleEyeTracking(e.clientX, e.clientY);
+            try { gridEl.setPointerCapture(e.pointerId); } catch (err) {}
             this.isPointerDown = true;
             const r = parseInt(cellEl.dataset.row, 10);
             const c = parseInt(cellEl.dataset.col, 10);
@@ -307,14 +338,15 @@ class IngoGame {
         let lastMoveEvent = null;
 
         gridEl.addEventListener('pointermove', (e) => {
-            if (!this.isPointerDown || this.isPaused) return;
+            this.scheduleEyeTracking(e.clientX, e.clientY);
+            if (!this.isPointerDown || this.isPaused || this.isSolving) return;
             lastMoveEvent = e;
 
             if (!dragRafPending) {
                 dragRafPending = true;
                 requestAnimationFrame(() => {
                     dragRafPending = false;
-                    if (!this.isPointerDown || this.isPaused || !lastMoveEvent) return;
+                    if (!this.isPointerDown || this.isPaused || this.isSolving || !lastMoveEvent) return;
                     const elem = document.elementFromPoint(lastMoveEvent.clientX, lastMoveEvent.clientY);
                     if (!elem) return;
                     const cellEl = elem.closest('.blob-cell');
@@ -341,7 +373,7 @@ class IngoGame {
             } catch (err) {}
 
             // When user releases finger or mouse without completing the word, RESET immediately!
-            if (this.selectedPath.length > 0 && this.selectedPath.length < this.cleanWord.length) {
+            if (!this.isSolving && this.selectedPath.length > 0 && this.selectedPath.length < this.cleanWord.length) {
                 if (window.sounds) window.sounds.playError();
                 this.resetSelection();
             }
@@ -352,20 +384,20 @@ class IngoGame {
         window.addEventListener('pointerup', endDrag);
         window.addEventListener('pointercancel', endDrag);
 
-        // Eye tracking: rAF throttled 60-120fps fluid tracking on mobile
-        let eyeRafPending = false;
-        let lastEyeX = 0;
-        let lastEyeY = 0;
-
+        // Eye tracking: rAF throttled 60-120fps fluid tracking on mobile and desktop
         window.addEventListener('pointermove', (e) => {
-            lastEyeX = e.clientX;
-            lastEyeY = e.clientY;
-            if (!eyeRafPending) {
-                eyeRafPending = true;
-                requestAnimationFrame(() => {
-                    eyeRafPending = false;
-                    this.trackEyes(lastEyeX, lastEyeY);
-                });
+            this.scheduleEyeTracking(e.clientX, e.clientY);
+        }, { passive: true });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches && e.touches[0]) {
+                this.scheduleEyeTracking(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: true });
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches && e.touches[0]) {
+                this.scheduleEyeTracking(e.touches[0].clientX, e.touches[0].clientY);
             }
         }, { passive: true });
 
@@ -377,13 +409,27 @@ class IngoGame {
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 this.pauseTimer();
+                if (this.isPointerDown) {
+                    this.isPointerDown = false;
+                    this.lastVisitedCell = null;
+                    if (!this.isSolving) {
+                        this.resetSelection();
+                    }
+                }
                 this.saveState();
             } else if (document.visibilityState === 'visible') {
-                // Resume timer only if not in a modal
-                if (!this.dom.pauseModal.classList.contains('active') &&
-                    !this.dom.wordModal.classList.contains('active') &&
-                    !this.dom.roundModal.classList.contains('active') &&
-                    !this.dom.levelModal.classList.contains('active')) {
+                // Resume timer only if NO modal is open and word is not currently solving
+                const anyModalOpen = [
+                    this.dom.pauseModal,
+                    this.dom.wordModal,
+                    this.dom.roundModal,
+                    this.dom.levelModal,
+                    this.dom.levelSelectModal,
+                    this.dom.dictModal,
+                    this.dom.timeoutModal
+                ].some(m => m && m.classList.contains('active'));
+
+                if (!anyModalOpen && !this.isSolving) {
                     this.resumeTimer();
                 }
             }
@@ -411,6 +457,9 @@ class IngoGame {
             this.savedWordIndex = null;
             this.startRound(rToLoad, wToLoad);
         } else {
+            this.savedRound = null;
+            this.savedWordIndex = null;
+            this.savedRoundWordIds = null;
             this.startRound(1, 0);
         }
     }
@@ -424,6 +473,7 @@ class IngoGame {
         if (roundNum === 1) {
             // Round 1: keep natural order
             this.roundWords = baseWords;
+            this.savedRoundWordIds = null;
         } else if (this.savedRoundWordIds && this.savedRoundWordIds.length === 20) {
             // Restore exact saved shuffled order
             const mapped = [];
@@ -436,6 +486,7 @@ class IngoGame {
         } else {
             // Rounds 2, 3, 4: shuffle word order for spaced-repetition recall!
             this.roundWords = this.shuffleArray(baseWords);
+            this.savedRoundWordIds = null;
         }
 
         this.wordIndex = (targetWordIndex >= 0 && targetWordIndex < 20) ? targetWordIndex : 0;
@@ -447,11 +498,18 @@ class IngoGame {
     // Load a Word within the current round
     loadWord(idx) {
         this.wordIndex = idx;
+        this.isPaused = false;
+        this.isSolving = false;
+        this.isPointerDown = false;
+        this.lastVisitedCell = null;
+        this.selectedPath = [];
+
+        if (this.dom.timeoutModal) this.dom.timeoutModal.classList.remove('active');
+        if (this.dom.wordModal) this.dom.wordModal.classList.remove('active');
+
         this.saveState(); // Instantly persist progress!
         this.currentWord = this.roundWords[idx];
-        this.cleanWord = this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase();
-        this.selectedPath = [];
-        this.lastVisitedCell = null;
+        this.cleanWord = (this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase()).slice(0, 25);
 
         this.updateHeaderUI();
         this.renderTargetWord();
@@ -506,15 +564,19 @@ class IngoGame {
 
         let foundPath = null;
 
-        // Try up to 300 random DFS walks
-        for (let attempt = 0; attempt < 300; attempt++) {
+        // Try up to 150 random DFS walks with strict iteration safety cap
+        for (let attempt = 0; attempt < 150; attempt++) {
             const startR = Math.floor(Math.random() * 5);
             const startC = Math.floor(Math.random() * 5);
             const path = [[startR, startC]];
             const visited = new Set([`${startR},${startC}`]);
+            let dfsOps = 0;
+            const MAX_DFS_OPS = 450;
 
             const dfs = (r, c, step) => {
                 if (step === L) return true;
+                if (++dfsOps > MAX_DFS_OPS) return false;
+
                 const neighbors = [];
                 for (const [dr, dc] of dirs) {
                     const nr = r + dr;
@@ -533,7 +595,7 @@ class IngoGame {
                     path.push([nr, nc]);
                     if (dfs(nr, nc, step + 1)) return true;
                     path.pop();
-                    visited.remove(`${nr},${nc}`);
+                    visited.delete(`${nr},${nc}`);
                 }
                 return false;
             };
@@ -624,9 +686,32 @@ class IngoGame {
         }
 
         // Cache eye centers for fast mouse/finger tracking
+        this.updateCellCenters();
         setTimeout(() => {
             this.updateCellCenters();
-        }, 30);
+        }, 50);
+    }
+
+    scheduleEyeTracking(x, y) {
+        if (!x && !y) return;
+        this.lastEyeX = x;
+        this.lastEyeY = y;
+        if (!this.eyeRafPending) {
+            this.eyeRafPending = true;
+            requestAnimationFrame(() => {
+                this.eyeRafPending = false;
+                this.trackEyes(this.lastEyeX, this.lastEyeY);
+            });
+        }
+    }
+
+    resetEyes() {
+        if (!this.cellCenters) return;
+        for (let i = 0; i < this.cellCenters.length; i++) {
+            const item = this.cellCenters[i];
+            if (item.leftPupil) item.leftPupil.setAttribute('transform', 'translate(1.8, -1.2)');
+            if (item.rightPupil) item.rightPupil.setAttribute('transform', 'translate(1.8, -1.2)');
+        }
     }
 
     updateCellCenters() {
@@ -646,9 +731,12 @@ class IngoGame {
     }
 
     trackEyes(mouseX, mouseY) {
-        if (!this.cellCenters || this.cellCenters.length === 0) return;
+        if (!this.cellCenters || this.cellCenters.length === 0) {
+            this.updateCellCenters();
+            if (!this.cellCenters || this.cellCenters.length === 0) return;
+        }
 
-        const maxOffset = 4.0;
+        const maxOffset = 4.2;
         const len = this.cellCenters.length;
 
         for (let i = 0; i < len; i++) {
@@ -658,10 +746,9 @@ class IngoGame {
             const dx = mouseX - item.cx;
             const dy = mouseY - item.cy;
             const dist = Math.hypot(dx, dy);
-            if (dist === 0) continue;
+            if (dist < 1) continue;
 
-            const scale = (dist < 35) ? (dist / 35) : 1.0;
-            // High-speed direct trigonometry: cos = dx/dist, sin = dy/dist
+            const scale = (dist < 30) ? (dist / 30) : 1.0;
             const offsetX = ((dx / dist) * maxOffset * scale).toFixed(1);
             const offsetY = ((dy / dist) * maxOffset * scale).toFixed(1);
 
@@ -766,9 +853,9 @@ class IngoGame {
     }
 
     resetSelection() {
-        this.selectedPath.forEach(([r, c]) => {
-            const cellEl = document.getElementById(`cell-${r}-${c}`);
-            if (cellEl) cellEl.classList.remove('selected');
+        const allCells = this.dom.grid.querySelectorAll('.blob-cell');
+        allCells.forEach(cellEl => {
+            cellEl.classList.remove('selected', 'hint-highlight', 'bounce', 'shake');
         });
         this.selectedPath = [];
         this.lastVisitedCell = null;
@@ -787,6 +874,7 @@ class IngoGame {
 
     // Word Solved Success!
     handleWordSolved() {
+        this.isSolving = true;
         this.stopTimer();
         this.isPointerDown = false;
 
@@ -996,11 +1084,15 @@ class IngoGame {
 
     handleTimeOut() {
         this.stopTimer();
+        this.isPaused = true;
+        this.isPointerDown = false;
+        this.resetSelection();
+
         if (window.sounds) window.sounds.playError();
 
-        // Shake whole grid
-        this.dom.grid.classList.add('cellShake');
-        setTimeout(() => this.dom.grid.classList.remove('cellShake'), 500);
+        // Shake grid gently
+        this.dom.grid.classList.add('shake');
+        setTimeout(() => this.dom.grid.classList.remove('shake'), 450);
 
         // Flash correct solution path to teach user
         this.solutionPath.forEach(([r, c]) => {
@@ -1008,15 +1100,17 @@ class IngoGame {
             if (cellEl) cellEl.classList.add('hint-highlight');
         });
 
-        // Prompt user
+        // Show non-blocking Timeout Modal
         setTimeout(() => {
-            if (confirm("Süre doldu! Bu kelimeyi tekrar denemek ister misin?")) {
-                this.resetSelection();
-                this.resetTimer();
-            } else {
-                this.nextWord();
+            if (this.dom.timeoutModalWord) {
+                const wName = this.currentWord ? (this.currentWord.displayWord || this.currentWord.word) : '';
+                const trName = this.currentWord ? this.currentWord.meaning : '';
+                this.dom.timeoutModalWord.innerHTML = `<strong>${wName}</strong> (${trName})<br><br>Bu kelimeyi tekrar denemek ister misin?`;
             }
-        }, 700);
+            if (this.dom.timeoutModal) {
+                this.dom.timeoutModal.classList.add('active');
+            }
+        }, 550);
     }
 
     // Modals Handling
