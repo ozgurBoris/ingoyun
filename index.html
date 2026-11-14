@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#1b1e1d">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>İngOyun - 60 Günde YDS Kelime Oyunu</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%2322c55e'/><text x='50' y='65' font-size='45' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>İO</text></svg>">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="top-left">
+                <div class="word-counter-badge">
+                    <span id="word-counter-text">Kelime 1</span>
+                    <span id="round-pill" class="round-pill">Tur 1/4</span>
+                </div>
+                <div class="coins-badge">
+                    <span class="coin-icon">🪙</span>
+                    <span id="coins-count">10</span>
+                </div>
+            </div>
+            <div class="top-right">
+                <button id="pause-btn" class="header-btn" title="Duraklat / Ayarlar">
+                    <div class="pause-icon">
+                        <div class="pause-bar"></div>
+                        <div class="pause-bar"></div>
+                    </div>
+                </button>
+            </div>
+        </header>
+
+        <!-- Timer (Zaman) Bar -->
+        <div class="timer-container" id="timer-container">
+            <div class="timer-fill" id="timer-fill"></div>
+            <div class="timer-label">Zaman</div>
+            <div class="timer-sublabel" id="timer-sublabel">25 sn</div>
+        </div>
+
+        <!-- Target Word Display Area -->
+        <section class="word-display-section">
+            <div class="target-word-letters" id="target-word-letters">
+                <!-- Dynamically filled with letters e.g. C O V E R -->
+            </div>
+            <div class="word-tr-meaning" id="word-tr-meaning">
+                = Türkçe Anlamı
+            </div>
+        </section>
+
+        <!-- 5x5 Pou Blob Grid -->
+        <main class="grid-container">
+            <div class="blob-grid" id="blob-grid">
+                <!-- 25 SVG Blob Cells populated dynamically -->
+            </div>
+        </main>
+
+        <!-- Bottom Action Bar -->
+        <footer class="bottom-controls">
+            <button id="hint-btn" class="action-pill-btn hint-btn" title="Sonraki harfi göster">
+                <span>💡</span> İpucu (-3 🪙)
+            </button>
+            <button id="speak-btn" class="action-pill-btn" title="Kelimeyi seslendir">
+                <span>🔊</span> Dinle
+            </button>
+            <button id="dict-btn" class="action-pill-btn" title="Günün kelimeleri listesi">
+                <span>📖</span> Sözlük
+            </button>
+        </footer>
+
+        <!-- MODAL: Word Completed -->
+        <div class="modal-overlay" id="word-completed-modal">
+            <div class="modal-card">
+                <div class="modal-icon-badge success">✓</div>
+                <h2 class="modal-title">Harika!</h2>
+                <div class="modal-subtitle">+1 Coin Kazanıldı 🪙</div>
+
+                <div class="word-detail-box">
+                    <div class="word-detail-header">
+                        <span class="word-detail-en" id="modal-word-en">WORD</span>
+                        <span class="word-detail-pos" id="modal-word-pos">[adj]</span>
+                    </div>
+                    <div class="word-detail-tr" id="modal-word-tr">Türkçe Anlamı</div>
+                    
+                    <div style="margin-top: 4px;">
+                        <div class="word-detail-example" id="modal-word-example">"Example sentence goes here."</div>
+                        <div class="word-detail-example-tr" id="modal-word-example-tr">Örnek cümle çevirisi</div>
+                    </div>
+
+                    <div class="word-detail-tags" id="modal-word-tags">
+                        <!-- Synonyms and Antonyms tags -->
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn-primary" id="modal-next-word-btn">
+                        <span>Sonraki Kelime</span> ➔
+                    </button>
+                    <button class="btn-secondary" id="modal-speak-btn">
+                        <span>🔊 Tekrar Dinle</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: Round Completed -->
+        <div class="modal-overlay" id="round-completed-modal">
+            <div class="modal-card">
+                <div class="modal-icon-badge gold">🎯</div>
+                <h2 class="modal-title" id="round-modal-title">1. Tur Tamamlandı!</h2>
+                <p class="modal-subtitle" id="round-modal-desc">
+                    Harika gidiyorsun! 20 kelime bitti. Şimdi 2. Tur başlıyor. Kelimeler yeni yerleşimleriyle hazır!
+                </p>
+                <div class="modal-actions">
+                    <button class="btn-primary" id="round-modal-next-btn">
+                        <span>Sonraki Tura Başla</span> ➔
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: Level Completed (All 4 Rounds) -->
+        <div class="modal-overlay" id="level-completed-modal">
+            <div class="modal-card">
+                <div class="modal-icon-badge gold">🏆</div>
+                <h2 class="modal-title" id="level-modal-title">1. Gün Tamamlandı!</h2>
+                <div style="font-size: 28px; margin: 4px 0;">⭐⭐⭐</div>
+                <p class="modal-subtitle">
+                    4 Tur boyunca 20 kelimeyi başarıyla pekiştirdin!<br>
+                    <strong>+50 Bonus Coin Kazandın! 🪙</strong>
+                </p>
+                <div class="modal-actions">
+                    <button class="btn-primary" id="level-modal-next-btn">
+                        <span>Sonraki Güne Geç</span> ➔
+                    </button>
+                    <button class="btn-secondary" id="level-modal-menu-btn">
+                        <span>Seviye Seçimi</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: Pause / Settings -->
+        <div class="modal-overlay" id="pause-modal">
+            <div class="modal-card">
+                <div class="modal-icon-badge gold">⏸️</div>
+                <h2 class="modal-title">Oyun Duraklatıldı</h2>
+
+                <div class="settings-list">
+                    <div class="setting-row">
+                        <span>Ses Efektleri</span>
+                        <label class="switch">
+                            <input type="checkbox" id="setting-sound" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <span>Sesli Telaffuz (TTS)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="setting-speech" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <span>Süre Sayacı (Zaman)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="setting-timer" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn-primary" id="pause-resume-btn">
+                        <span>▶️ Devam Et</span>
+                    </button>
+                    <button class="btn-secondary" id="pause-restart-btn">
+                        <span>🔄 Seviyeyi Baştan Başlat</span>
+                    </button>
+                    <button class="btn-secondary" id="pause-level-menu-btn">
+                        <span>🗺️ Seviye Seçimi (54 Gün)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: Level Select (54 Days) -->
+        <div class="modal-overlay" id="level-select-modal">
+            <div class="modal-card" style="max-width: 400px;">
+                <div class="modal-icon-badge gold">🗺️</div>
+                <h2 class="modal-title">Seviye Seçimi</h2>
+                <div class="modal-subtitle">54 Gün • Toplam 1080 Kelime</div>
+
+                <div class="level-grid" id="level-grid">
+                    <!-- 54 days rendered dynamically -->
+                </div>
+
+                <div class="modal-actions" style="margin-top: 10px;">
+                    <button class="btn-secondary" id="level-select-close-btn">
+                        Kapat
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: Dictionary / Word List -->
+        <div class="modal-overlay" id="dict-modal">
+            <div class="modal-card" style="max-width: 400px;">
+                <div class="modal-icon-badge gold">📖</div>
+                <h2 class="modal-title" id="dict-modal-title">Günün Kelimeleri</h2>
+                <div class="modal-subtitle">Tüm kelimeleri incele ve telaffuzlarını dinle</div>
+
+                <div class="dict-list" id="dict-list">
+                    <!-- 20 words for current day rendered dynamically -->
+                </div>
+
+                <div class="modal-actions" style="margin-top: 10px;">
+                    <button class="btn-secondary" id="dict-close-btn">
+                        Oyuna Dön
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="words_data.js"></script>
+    <script src="audio.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
