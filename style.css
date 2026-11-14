@@ -184,7 +184,9 @@ body {
     position: absolute;
     left: 0;
     top: 0;
-    transition: width 0.15s linear;
+    transform-origin: left center;
+    will-change: transform;
+    transition: transform 0.15s linear;
 }
 
 .timer-label {
@@ -341,10 +343,18 @@ body {
     height: 100%;
     overflow: visible;
     pointer-events: none;
+    transform: translateZ(0);
 }
 
 .blob-pupil {
-    transition: transform 0.06s ease-out;
+    will-change: transform;
+    transform: translateZ(0);
+}
+
+.blob-cell {
+    will-change: transform;
+    transform: translateZ(0);
+    -webkit-tap-highlight-color: transparent;
 }
 
 /* 15 Dynamic Themes for Blobs */
@@ -403,7 +413,6 @@ body {
     stroke-width: 5px;
     stroke-linejoin: round;
     paint-order: stroke fill;
-    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
 }
 
 /* Bottom Controls */

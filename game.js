@@ -278,25 +278,37 @@ class IngoGame {
             this.handleCellTouch(r, c);
         });
 
+        let dragRafPending = false;
+        let lastMoveEvent = null;
+
         gridEl.addEventListener('pointermove', (e) => {
             if (!this.isPointerDown || this.isPaused) return;
-            // Get element from current touch/pointer coordinates
-            const elem = document.elementFromPoint(e.clientX, e.clientY);
-            if (!elem) return;
-            const cellEl = elem.closest('.blob-cell');
-            if (!cellEl) return;
-            const r = parseInt(cellEl.dataset.row, 10);
-            const c = parseInt(cellEl.dataset.col, 10);
-            if (this.lastVisitedCell && this.lastVisitedCell[0] === r && this.lastVisitedCell[1] === c) {
-                return;
+            lastMoveEvent = e;
+
+            if (!dragRafPending) {
+                dragRafPending = true;
+                requestAnimationFrame(() => {
+                    dragRafPending = false;
+                    if (!this.isPointerDown || this.isPaused || !lastMoveEvent) return;
+                    const elem = document.elementFromPoint(lastMoveEvent.clientX, lastMoveEvent.clientY);
+                    if (!elem) return;
+                    const cellEl = elem.closest('.blob-cell');
+                    if (!cellEl) return;
+                    const r = parseInt(cellEl.dataset.row, 10);
+                    const c = parseInt(cellEl.dataset.col, 10);
+                    if (this.lastVisitedCell && this.lastVisitedCell[0] === r && this.lastVisitedCell[1] === c) {
+                        return;
+                    }
+                    this.handleCellTouch(r, c);
+                });
             }
-            this.handleCellTouch(r, c);
-        });
+        }, { passive: true });
 
         const endDrag = (e) => {
             if (!this.isPointerDown) return;
             this.isPointerDown = false;
             this.lastVisitedCell = null;
+            lastMoveEvent = null;
             try {
                 if (gridEl.hasPointerCapture && gridEl.hasPointerCapture(e.pointerId)) {
                     gridEl.releasePointerCapture(e.pointerId);
@@ -315,10 +327,23 @@ class IngoGame {
         window.addEventListener('pointerup', endDrag);
         window.addEventListener('pointercancel', endDrag);
 
-        // Eye tracking: all Pou creatures look at cursor or finger in real-time!
+        // Eye tracking: rAF throttled 60-120fps fluid tracking on mobile
+        let eyeRafPending = false;
+        let lastEyeX = 0;
+        let lastEyeY = 0;
+
         window.addEventListener('pointermove', (e) => {
-            this.trackEyes(e.clientX, e.clientY);
-        });
+            lastEyeX = e.clientX;
+            lastEyeY = e.clientY;
+            if (!eyeRafPending) {
+                eyeRafPending = true;
+                requestAnimationFrame(() => {
+                    eyeRafPending = false;
+                    this.trackEyes(lastEyeX, lastEyeY);
+                });
+            }
+        }, { passive: true });
+
         window.addEventListener('resize', () => {
             this.updateCellCenters();
         });
@@ -561,7 +586,10 @@ class IngoGame {
     trackEyes(mouseX, mouseY) {
         if (!this.cellCenters || this.cellCenters.length === 0) return;
 
-        for (let i = 0; i < this.cellCenters.length; i++) {
+        const maxOffset = 4.0;
+        const len = this.cellCenters.length;
+
+        for (let i = 0; i < len; i++) {
             const item = this.cellCenters[i];
             if (!item.leftPupil || !item.rightPupil) continue;
 
@@ -570,11 +598,10 @@ class IngoGame {
             const dist = Math.hypot(dx, dy);
             if (dist === 0) continue;
 
-            const angle = Math.atan2(dy, dx);
-            const maxOffset = 4.2;
-            const scale = Math.min(dist / 35, 1.0);
-            const offsetX = (Math.cos(angle) * maxOffset * scale).toFixed(2);
-            const offsetY = (Math.sin(angle) * maxOffset * scale).toFixed(2);
+            const scale = (dist < 35) ? (dist / 35) : 1.0;
+            // High-speed direct trigonometry: cos = dx/dist, sin = dy/dist
+            const offsetX = ((dx / dist) * maxOffset * scale).toFixed(1);
+            const offsetY = ((dy / dist) * maxOffset * scale).toFixed(1);
 
             const transformStr = `translate(${offsetX}, ${offsetY})`;
             item.leftPupil.setAttribute('transform', transformStr);
@@ -863,7 +890,7 @@ class IngoGame {
     resetTimer() {
         this.stopTimer();
         if (!this.settings.timer) {
-            this.dom.timerFill.style.width = '100%';
+            this.dom.timerFill.style.transform = 'scaleX(1)';
             this.dom.timerSublabel.textContent = 'Rahat Mod (Süresiz)';
             return;
         }
@@ -885,8 +912,8 @@ class IngoGame {
     }
 
     updateTimerDisplay() {
-        const pct = Math.max(0, (this.timerRemaining / this.timerMaxSeconds) * 100);
-        this.dom.timerFill.style.width = `${pct}%`;
+        const ratio = Math.max(0, (this.timerRemaining / this.timerMaxSeconds));
+        this.dom.timerFill.style.transform = `scaleX(${ratio})`;
         this.dom.timerSublabel.textContent = `${Math.ceil(this.timerRemaining)} sn`;
     }
 
