@@ -84,6 +84,9 @@ class SoundManager {
 
         osc.connect(gain);
         gain.connect(this.ctx.destination);
+        osc.onended = () => {
+            try { osc.disconnect(); gain.disconnect(); } catch (e) {}
+        };
 
         osc.start();
         osc.stop(this.ctx.currentTime + 0.1);
@@ -96,7 +99,6 @@ class SoundManager {
 
         const now = this.ctx.currentTime;
         const osc1 = this.ctx.createOscillator();
-        const osc2 = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
 
         osc1.type = 'sine';
@@ -108,6 +110,9 @@ class SoundManager {
 
         osc1.connect(gain);
         gain.connect(this.ctx.destination);
+        osc1.onended = () => {
+            try { osc1.disconnect(); gain.disconnect(); } catch (e) {}
+        };
 
         osc1.start(now);
         osc1.stop(now + 0.35);
@@ -133,6 +138,9 @@ class SoundManager {
 
             osc.connect(gain);
             gain.connect(this.ctx.destination);
+            osc.onended = () => {
+                try { osc.disconnect(); gain.disconnect(); } catch (e) {}
+            };
 
             osc.start(startTime);
             osc.stop(startTime + duration);
@@ -158,6 +166,9 @@ class SoundManager {
 
         osc.connect(gain);
         gain.connect(this.ctx.destination);
+        osc.onended = () => {
+            try { osc.disconnect(); gain.disconnect(); } catch (e) {}
+        };
 
         osc.start(now);
         osc.stop(now + 0.14);

@@ -185,7 +185,6 @@ body {
     top: 0;
     transform-origin: left center;
     will-change: transform;
-    transition: transform 0.15s linear;
 }
 
 .timer-label {
@@ -196,9 +195,10 @@ body {
     font-size: 26px;
     font-weight: 700;
     color: #ffffff;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5), -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    text-shadow: 2px 2px 0 #000;
     z-index: 2;
     pointer-events: none;
+    transform: translateZ(0);
 }
 
 .timer-sublabel {
@@ -209,9 +209,10 @@ body {
     font-size: 16px;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.85);
-    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6);
     z-index: 2;
     pointer-events: none;
+    transform: translateZ(0);
 }
 
 /* Target Word Display */
@@ -223,6 +224,7 @@ body {
     justify-content: center;
     gap: 4px;
     min-height: 64px;
+    contain: layout style;
 }
 
 .target-word-letters {
@@ -234,12 +236,11 @@ body {
     font-size: 32px;
     font-weight: 700;
     letter-spacing: 2px;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+    text-shadow: 2px 2px 3px rgba(0, 0, 0, 0.7);
 }
 
 .target-letter {
     color: #ffffff;
-    transition: color 0.15s ease, transform 0.15s ease;
     display: inline-block;
     min-width: 16px;
     text-align: center;
@@ -247,8 +248,8 @@ body {
 
 .target-letter.matched {
     color: #26e637;
-    text-shadow: 0 0 10px rgba(38, 230, 55, 0.7), 2px 2px 2px #000;
-    transform: scale(1.15);
+    text-shadow: 2px 2px 0 #000;
+    transform: scale(1.12);
 }
 
 .word-tr-meaning {
@@ -294,7 +295,6 @@ body {
     justify-content: center;
     cursor: pointer;
     touch-action: none;
-    transition: transform 0.12s ease;
 }
 
 @media (hover: hover) {
@@ -304,21 +304,25 @@ body {
 }
 
 .blob-cell.selected {
-    transform: scale(1.1);
+    transform: scale(1.08);
     z-index: 5;
 }
 
 .blob-cell.shake {
-    animation: cellShake 0.4s ease;
+    animation: cellShake 0.35s ease;
 }
 
 .blob-cell.bounce {
-    animation: cellBounce 0.5s ease;
+    animation: cellBounce 0.45s ease;
+}
+
+.blob-cell.hint-highlight {
+    animation: hintPulse 0.8s infinite alternate;
 }
 
 .blob-cell.hint-highlight .blob-body {
-    filter: drop-shadow(0 0 10px #ffe600);
-    animation: hintPulse 1s infinite alternate;
+    stroke: #ffe600 !important;
+    stroke-width: 4.5px !important;
 }
 
 @keyframes hintPulse {
@@ -351,7 +355,7 @@ body {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    transform: translate3d(1.8%, -1.2%, 0);
+    transform: translate3d(1px, -1px, 0);
 }
 
 .pupil {

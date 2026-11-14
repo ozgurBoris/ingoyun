@@ -267,6 +267,7 @@ class IngoGame {
                 this.saveState();
                 if (!this.settings.timer) {
                     this.stopTimer();
+                    this.dom.timerFill.style.transition = 'none';
                     this.dom.timerFill.style.transform = 'scaleX(1)';
                     this.dom.timerSublabel.textContent = 'Rahat Mod (Süresiz)';
                 } else {
@@ -338,30 +339,47 @@ class IngoGame {
             this.isPointerDown = true;
             const r = parseInt(cellEl.dataset.row, 10);
             const c = parseInt(cellEl.dataset.col, 10);
+            this.lastPointerCell = [r, c];
             this.handleCellTouch(r, c);
         });
 
         let dragRafPending = false;
-        let lastMoveEvent = null;
+        let lastMoveX = 0;
+        let lastMoveY = 0;
 
         gridEl.addEventListener('pointermove', (e) => {
             if (!this.isPointerDown || this.isPaused || this.isSolving) return;
-            lastMoveEvent = e;
+            lastMoveX = e.clientX;
+            lastMoveY = e.clientY;
 
             if (!dragRafPending) {
                 dragRafPending = true;
                 requestAnimationFrame(() => {
                     dragRafPending = false;
-                    if (!this.isPointerDown || this.isPaused || this.isSolving || !lastMoveEvent) return;
-                    const elem = document.elementFromPoint(lastMoveEvent.clientX, lastMoveEvent.clientY);
-                    if (!elem) return;
-                    const cellEl = elem.closest('.blob-cell');
-                    if (!cellEl) return;
-                    const r = parseInt(cellEl.dataset.row, 10);
-                    const c = parseInt(cellEl.dataset.col, 10);
-                    if (this.lastVisitedCell && this.lastVisitedCell[0] === r && this.lastVisitedCell[1] === c) {
+                    if (!this.isPointerDown || this.isPaused || this.isSolving) return;
+                    if (!this.gridRect || !this.gridRect.width) this.updateCellCenters();
+                    const rect = this.gridRect;
+                    if (!rect || !rect.width) return;
+
+                    const relX = lastMoveX - rect.left;
+                    const relY = lastMoveY - rect.top;
+                    if (relX < 0 || relY < 0 || relX >= rect.width || relY >= rect.height) return;
+
+                    const cellW = rect.width / 5;
+                    const cellH = rect.height / 5;
+                    const c = Math.floor(relX / cellW);
+                    const r = Math.floor(relY / cellH);
+                    if (r < 0 || r >= 5 || c < 0 || c >= 5) return;
+
+                    // 10% edge deadzone to avoid accidental corner grazes while dragging
+                    const inX = (relX - c * cellW) / cellW;
+                    const inY = (relY - r * cellH) / cellH;
+                    if (inX < 0.10 || inX > 0.90 || inY < 0.10 || inY > 0.90) return;
+
+                    if (this.lastPointerCell && this.lastPointerCell[0] === r && this.lastPointerCell[1] === c) {
                         return;
                     }
+                    this.lastPointerCell = [r, c];
                     this.handleCellTouch(r, c);
                 });
             }
@@ -371,7 +389,7 @@ class IngoGame {
             if (!this.isPointerDown) return;
             this.isPointerDown = false;
             this.lastVisitedCell = null;
-            lastMoveEvent = null;
+            this.lastPointerCell = null;
             try {
                 if (gridEl.hasPointerCapture && gridEl.hasPointerCapture(e.pointerId)) {
                     gridEl.releasePointerCapture(e.pointerId);
@@ -554,14 +572,18 @@ class IngoGame {
     // Render Target Word Letters at the top
     renderTargetWord() {
         this.dom.targetWordLetters.innerHTML = '';
+        this.targetLetterEls = [];
+        const frag = document.createDocumentFragment();
         const letters = this.cleanWord.split('');
-        letters.forEach((l, i) => {
+        for (let i = 0; i < letters.length; i++) {
             const span = document.createElement('span');
             span.className = 'target-letter';
             span.dataset.index = i;
-            span.textContent = l;
-            this.dom.targetWordLetters.appendChild(span);
-        });
+            span.textContent = letters[i];
+            this.targetLetterEls.push(span);
+            frag.appendChild(span);
+        }
+        this.dom.targetWordLetters.appendChild(frag);
 
         // Turkish meaning display: "= [Türkçe]"
         const posText = this.currentWord.pos ? `(${this.currentWord.pos}) ` : '';
@@ -725,7 +747,7 @@ class IngoGame {
             this.eyeRafPending = true;
             requestAnimationFrame((now) => {
                 this.eyeRafPending = false;
-                if (now - this.lastEyeTime < 24) return;
+                if (now - this.lastEyeTime < 36) return;
                 this.lastEyeTime = now;
                 this.trackEyes(this.lastEyeX, this.lastEyeY);
             });
@@ -733,7 +755,7 @@ class IngoGame {
     }
 
     resetEyes() {
-        const defaultT = 'translate3d(1.8%, -1.2%, 0)';
+        const defaultT = 'translate3d(1px, -1px, 0)';
         for (let i = 0; i < this.cellPool.length; i++) {
             const item = this.cellPool[i];
             if (item.pupilsEl && item.lastT !== defaultT) {
@@ -748,6 +770,7 @@ class IngoGame {
         if (!gridEl) return;
         const rect = gridEl.getBoundingClientRect();
         if (!rect.width || !rect.height) return;
+        this.gridRect = rect;
 
         // Single grid rect read instead of 25 separate getBoundingClientRect() calls (zero layout thrashing)
         const gap = 6;
@@ -773,7 +796,7 @@ class IngoGame {
             if (!this.cellCenters || this.cellCenters.length === 0) return;
         }
 
-        const maxOffset = 4.0;
+        const maxOffsetPx = 2.8;
         const len = this.cellCenters.length;
 
         for (let i = 0; i < len; i++) {
@@ -784,14 +807,15 @@ class IngoGame {
             const dx = mouseX - item.cx;
             const dy = mouseY - item.cy;
             const distSq = dx * dx + dy * dy;
-            if (distSq < 1) continue;
+            if (distSq < 4) continue;
 
             const dist = Math.sqrt(distSq);
             const scale = (dist < 30) ? (dist / 30) : 1.0;
-            const offsetX = Math.round(((dx / dist) * maxOffset * scale) * 2) / 2;
-            const offsetY = Math.round(((dy / dist) * maxOffset * scale) * 2) / 2;
+            // Quantize to integer pixels (-3px .. +3px) so 90%+ of cells skip DOM style writes during drag
+            const offsetX = Math.round((dx / dist) * maxOffsetPx * scale);
+            const offsetY = Math.round((dy / dist) * maxOffsetPx * scale);
 
-            const transformStr = `translate3d(${offsetX}%, ${offsetY}%, 0)`;
+            const transformStr = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
             if (item.entry.lastT !== transformStr) {
                 item.entry.lastT = transformStr;
                 pupilsEl.style.transform = transformStr;
@@ -853,15 +877,16 @@ class IngoGame {
         this.selectedPath.push([r, c]);
         this.lastVisitedCell = [r, c];
 
-        const cellEl = document.getElementById(`cell-${r}-${c}`);
+        const poolItem = this.cellPool[r * 5 + c];
+        const cellEl = poolItem ? poolItem.cell : document.getElementById(`cell-${r}-${c}`);
         if (cellEl) {
             cellEl.classList.add('selected');
             cellEl.classList.remove('hint-highlight');
         }
 
-        // Highlight matching letter at top
+        // Highlight matching letter at top (direct array lookup, 0 querySelector)
         const step = this.selectedPath.length - 1;
-        const letterEl = this.dom.targetWordLetters.querySelector(`[data-index="${step}"]`);
+        const letterEl = this.targetLetterEls && this.targetLetterEls[step];
         if (letterEl) letterEl.classList.add('matched');
 
         // Play pop sound with pitch increasing with step
@@ -876,11 +901,12 @@ class IngoGame {
     removeLastFromSelection() {
         if (this.selectedPath.length === 0) return;
         const removed = this.selectedPath.pop();
-        const cellEl = document.getElementById(`cell-${removed[0]}-${removed[1]}`);
+        const poolItem = this.cellPool[removed[0] * 5 + removed[1]];
+        const cellEl = poolItem ? poolItem.cell : document.getElementById(`cell-${removed[0]}-${removed[1]}`);
         if (cellEl) cellEl.classList.remove('selected');
 
         const step = this.selectedPath.length;
-        const letterEl = this.dom.targetWordLetters.querySelector(`[data-index="${step}"]`);
+        const letterEl = this.targetLetterEls && this.targetLetterEls[step];
         if (letterEl) letterEl.classList.remove('matched');
 
         this.lastVisitedCell = this.selectedPath.length > 0 ? this.selectedPath[this.selectedPath.length - 1] : null;
@@ -888,28 +914,33 @@ class IngoGame {
     }
 
     handleDragRelease() {
-        // If word is not fully completed on release, check if we keep or clear
-        // In tap-or-drag gameplay: if they released mid-word, we can let them keep tapping
-        // OR if they drag outside, keep partial path so they can tap next letter!
     }
 
     resetSelection() {
-        const allCells = this.dom.grid.querySelectorAll('.blob-cell');
-        allCells.forEach(cellEl => {
-            cellEl.classList.remove('selected', 'hint-highlight', 'bounce', 'shake');
-        });
+        for (let i = 0; i < this.cellPool.length; i++) {
+            this.cellPool[i].cell.classList.remove('selected', 'hint-highlight', 'bounce', 'shake');
+        }
         this.selectedPath = [];
         this.lastVisitedCell = null;
+        this.lastPointerCell = null;
 
-        const letterEls = this.dom.targetWordLetters.querySelectorAll('.target-letter');
-        letterEls.forEach(el => el.classList.remove('matched'));
+        if (this.targetLetterEls) {
+            for (let i = 0; i < this.targetLetterEls.length; i++) {
+                this.targetLetterEls[i].classList.remove('matched');
+            }
+        }
     }
 
     shakeCell(r, c) {
-        const cellEl = document.getElementById(`cell-${r}-${c}`);
-        if (cellEl) {
+        const poolItem = this.cellPool[r * 5 + c];
+        const cellEl = poolItem ? poolItem.cell : document.getElementById(`cell-${r}-${c}`);
+        if (cellEl && !cellEl._shaking) {
+            cellEl._shaking = true;
             cellEl.classList.add('shake');
-            setTimeout(() => cellEl.classList.remove('shake'), 400);
+            setTimeout(() => {
+                cellEl.classList.remove('shake');
+                cellEl._shaking = false;
+            }, 350);
         }
     }
 
@@ -1077,21 +1108,40 @@ class IngoGame {
         this.dom.levelModal.classList.add('active');
     }
 
-    // Timer Implementation
+    // Timer Implementation (100% GPU compositor CSS transition for zero-stutter bar + lightweight 250ms clock check)
+    startTimerBarTransition(seconds) {
+        const fill = this.dom.timerFill;
+        if (!fill) return;
+        const ratio = Math.max(0, Math.min(1, seconds / this.timerMaxSeconds));
+        fill.style.transition = 'none';
+        fill.style.transform = `scaleX(${ratio})`;
+        // Flush only timerFill style so compositor starts linear glide to 0 cleanly
+        void fill.offsetWidth;
+        if (seconds > 0 && !this.isPaused && this.settings.timer) {
+            fill.style.transition = `transform ${seconds.toFixed(2)}s linear`;
+            fill.style.transform = 'scaleX(0)';
+        }
+    }
+
     resetTimer() {
         this.stopTimer();
         if (!this.settings.timer) {
+            this.dom.timerFill.style.transition = 'none';
             this.dom.timerFill.style.transform = 'scaleX(1)';
             this.dom.timerSublabel.textContent = 'Rahat Mod (Süresiz)';
             return;
         }
 
         this.timerRemaining = this.timerMaxSeconds;
+        this.timerEndTime = performance.now() + this.timerRemaining * 1000;
+        this.lastDisplayedSec = null;
         this.updateTimerDisplay();
+        this.startTimerBarTransition(this.timerRemaining);
 
         this.timerInterval = setInterval(() => {
             if (this.isPaused) return;
-            this.timerRemaining -= 0.1;
+            const now = performance.now();
+            this.timerRemaining = Math.max(0, (this.timerEndTime - now) / 1000);
             if (this.timerRemaining <= 0) {
                 this.timerRemaining = 0;
                 this.updateTimerDisplay();
@@ -1099,12 +1149,10 @@ class IngoGame {
             } else {
                 this.updateTimerDisplay();
             }
-        }, 100);
+        }, 250);
     }
 
     updateTimerDisplay() {
-        const ratio = Math.max(0, (this.timerRemaining / this.timerMaxSeconds));
-        this.dom.timerFill.style.transform = `scaleX(${ratio})`;
         const sec = Math.ceil(this.timerRemaining);
         if (sec !== this.lastDisplayedSec) {
             this.lastDisplayedSec = sec;
@@ -1117,14 +1165,33 @@ class IngoGame {
             clearInterval(this.timerInterval);
             this.timerInterval = null;
         }
+        if (this.dom && this.dom.timerFill) {
+            const ratio = Math.max(0, Math.min(1, this.timerRemaining / this.timerMaxSeconds));
+            this.dom.timerFill.style.transition = 'none';
+            this.dom.timerFill.style.transform = `scaleX(${ratio})`;
+        }
     }
 
     pauseTimer() {
+        if (this.isPaused) return;
         this.isPaused = true;
+        if (this.settings.timer && this.timerEndTime) {
+            this.timerRemaining = Math.max(0, (this.timerEndTime - performance.now()) / 1000);
+            const ratio = Math.max(0, Math.min(1, this.timerRemaining / this.timerMaxSeconds));
+            if (this.dom && this.dom.timerFill) {
+                this.dom.timerFill.style.transition = 'none';
+                this.dom.timerFill.style.transform = `scaleX(${ratio})`;
+            }
+        }
     }
 
     resumeTimer() {
+        if (!this.isPaused) return;
         this.isPaused = false;
+        if (this.settings.timer && this.timerRemaining > 0) {
+            this.timerEndTime = performance.now() + this.timerRemaining * 1000;
+            this.startTimerBarTransition(this.timerRemaining);
+        }
     }
 
     handleTimeOut() {
