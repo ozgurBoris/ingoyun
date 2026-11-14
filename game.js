@@ -86,6 +86,25 @@ class IngoGame {
                 if (dayNum >= 1 && dayNum <= 54) this.currentDay = dayNum;
             }
 
+            const savedRound = localStorage.getItem('ingoyun_current_round');
+            if (savedRound) {
+                const r = parseInt(savedRound, 10);
+                if (r >= 1 && r <= 4) this.savedRound = r;
+            }
+
+            const savedWordIndex = localStorage.getItem('ingoyun_word_index');
+            if (savedWordIndex) {
+                const wi = parseInt(savedWordIndex, 10);
+                if (wi >= 0 && wi < 20) this.savedWordIndex = wi;
+            }
+
+            const savedWordIds = localStorage.getItem('ingoyun_round_word_ids');
+            if (savedWordIds) {
+                try {
+                    this.savedRoundWordIds = JSON.parse(savedWordIds);
+                } catch (e) {}
+            }
+
             // Sync with sound manager
             if (window.sounds) {
                 window.sounds.soundEnabled = this.settings.sound;
@@ -103,6 +122,12 @@ class IngoGame {
             localStorage.setItem('ingoyun_stars', JSON.stringify(this.dayStars));
             localStorage.setItem('ingoyun_settings', JSON.stringify(this.settings));
             localStorage.setItem('ingoyun_last_day', this.currentDay.toString());
+            localStorage.setItem('ingoyun_current_round', (this.currentRound || 1).toString());
+            localStorage.setItem('ingoyun_word_index', (this.wordIndex || 0).toString());
+            if (this.roundWords && this.roundWords.length > 0) {
+                const ids = this.roundWords.map(w => w.id || w.word);
+                localStorage.setItem('ingoyun_round_word_ids', JSON.stringify(ids));
+            }
         } catch (e) {
             console.warn('Storage save error:', e);
         }
@@ -243,7 +268,7 @@ class IngoGame {
         this.dom.levelModalNextBtn.addEventListener('click', () => {
             this.dom.levelModal.classList.remove('active');
             if (this.currentDay < 54) {
-                this.loadDay(this.currentDay + 1);
+                this.loadDay(this.currentDay + 1, false);
             } else {
                 this.showLevelSelectModal();
             }
@@ -347,13 +372,31 @@ class IngoGame {
         window.addEventListener('resize', () => {
             this.updateCellCenters();
         });
+
+        // Background / App-Switch Lifecycle Handling
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                this.pauseTimer();
+                this.saveState();
+            } else if (document.visibilityState === 'visible') {
+                // Resume timer only if not in a modal
+                if (!this.dom.pauseModal.classList.contains('active') &&
+                    !this.dom.wordModal.classList.contains('active') &&
+                    !this.dom.roundModal.classList.contains('active') &&
+                    !this.dom.levelModal.classList.contains('active')) {
+                    this.resumeTimer();
+                }
+            }
+        });
+
+        window.addEventListener('pagehide', () => this.saveState());
+        window.addEventListener('beforeunload', () => this.saveState());
     }
 
-    // Load a Specific Day (Level)
-    loadDay(dayNum) {
+    // Load a Specific Day (Level) with seamless progress resume
+    loadDay(dayNum, resumeSaved = true) {
         if (dayNum < 1 || dayNum > 54) dayNum = 1;
         this.currentDay = dayNum;
-        this.saveState();
 
         const dayEntry = this.wordsData.find(d => d.day === dayNum);
         if (!dayEntry || !dayEntry.words || dayEntry.words.length === 0) {
@@ -361,11 +404,19 @@ class IngoGame {
             return;
         }
 
-        this.startRound(1);
+        if (resumeSaved && this.savedRound !== undefined && this.savedRound !== null) {
+            const rToLoad = this.savedRound;
+            const wToLoad = (this.savedWordIndex !== undefined && this.savedWordIndex !== null) ? this.savedWordIndex : 0;
+            this.savedRound = null;
+            this.savedWordIndex = null;
+            this.startRound(rToLoad, wToLoad);
+        } else {
+            this.startRound(1, 0);
+        }
     }
 
-    // Start a Round (1 to 4)
-    startRound(roundNum) {
+    // Start a Round (1 to 4) at a specific word index
+    startRound(roundNum, targetWordIndex = 0) {
         this.currentRound = roundNum;
         const dayEntry = this.wordsData.find(d => d.day === this.currentDay);
         const baseWords = [...dayEntry.words];
@@ -373,12 +424,22 @@ class IngoGame {
         if (roundNum === 1) {
             // Round 1: keep natural order
             this.roundWords = baseWords;
+        } else if (this.savedRoundWordIds && this.savedRoundWordIds.length === 20) {
+            // Restore exact saved shuffled order
+            const mapped = [];
+            this.savedRoundWordIds.forEach(id => {
+                const found = baseWords.find(w => (w.id || w.word) === id);
+                if (found) mapped.push(found);
+            });
+            this.roundWords = mapped.length === 20 ? mapped : this.shuffleArray(baseWords);
+            this.savedRoundWordIds = null;
         } else {
             // Rounds 2, 3, 4: shuffle word order for spaced-repetition recall!
             this.roundWords = this.shuffleArray(baseWords);
         }
 
-        this.wordIndex = 0;
+        this.wordIndex = (targetWordIndex >= 0 && targetWordIndex < 20) ? targetWordIndex : 0;
+        this.saveState();
         this.updateHeaderUI();
         this.loadWord(this.wordIndex);
     }
@@ -386,6 +447,7 @@ class IngoGame {
     // Load a Word within the current round
     loadWord(idx) {
         this.wordIndex = idx;
+        this.saveState(); // Instantly persist progress!
         this.currentWord = this.roundWords[idx];
         this.cleanWord = this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase();
         this.selectedPath = [];
@@ -999,7 +1061,7 @@ class IngoGame {
             if (isUnlocked) {
                 btn.addEventListener('click', () => {
                     this.dom.levelSelectModal.classList.remove('active');
-                    this.loadDay(d);
+                    this.loadDay(d, false);
                 });
             }
 
