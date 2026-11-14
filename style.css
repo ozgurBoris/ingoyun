@@ -709,13 +709,13 @@ body {
     background: #3e4642;
 }
 
-/* Level Select Grid */
+/* Level Select Grid (2 columns: X. Gün & X. Gün Alıştırma side by side) */
 .level-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
     width: 100%;
-    max-height: 50vh;
+    max-height: 54vh;
     overflow-y: auto;
     padding: 6px;
 }
@@ -724,7 +724,7 @@ body {
     background: #1e2220;
     border: 1.5px solid #38423d;
     border-radius: 14px;
-    padding: 10px 4px;
+    padding: 10px 8px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -732,7 +732,7 @@ body {
     gap: 4px;
     cursor: pointer;
     color: #ffffff;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .level-card-btn.unlocked {
@@ -740,10 +740,21 @@ body {
     border-color: #22c55e;
 }
 
+.level-card-btn.practice.unlocked {
+    background: #292436;
+    border-color: #a855f7;
+}
+
 .level-card-btn.current {
     background: linear-gradient(135deg, #15803d, #22c55e);
     border-color: #4ade80;
     box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
+}
+
+.level-card-btn.practice.current {
+    background: linear-gradient(135deg, #6b21a8, #a855f7);
+    border-color: #d8b4fe;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.45);
 }
 
 .level-card-btn.locked {
@@ -754,7 +765,7 @@ body {
 
 .level-number {
     font-family: var(--font-heading);
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 700;
 }
 

@@ -60,6 +60,7 @@ class IngoGame {
         this.isPaused = false;
         this.isSolving = false;
         this.isInitialLoad = true;
+        this.isPractice = false;
         this.boardBuilt = false;
         this.cellPool = [];
         this.cellCenters = [];
@@ -69,7 +70,7 @@ class IngoGame {
         this.initStorage();
         this.bindDOM();
         this.bindEvents();
-        this.loadDay(this.currentDay);
+        this.loadDay(this.currentDay, true, this.isPractice);
     }
 
     // Local Storage Persistence
@@ -91,6 +92,11 @@ class IngoGame {
             if (savedDay) {
                 const dayNum = parseInt(savedDay, 10);
                 if (dayNum >= 1 && dayNum <= 54) this.currentDay = dayNum;
+            }
+
+            const savedPractice = localStorage.getItem('ingoyun_is_practice');
+            if (savedPractice !== null) {
+                this.isPractice = savedPractice === '1';
             }
 
             const savedRound = localStorage.getItem('ingoyun_current_round');
@@ -129,6 +135,7 @@ class IngoGame {
             localStorage.setItem('ingoyun_stars', JSON.stringify(this.dayStars));
             localStorage.setItem('ingoyun_settings', JSON.stringify(this.settings));
             localStorage.setItem('ingoyun_last_day', this.currentDay.toString());
+            localStorage.setItem('ingoyun_is_practice', this.isPractice ? '1' : '0');
             localStorage.setItem('ingoyun_current_round', (this.currentRound || 1).toString());
             localStorage.setItem('ingoyun_word_index', (this.wordIndex || 0).toString());
             if (this.roundWords && this.roundWords.length > 0) {
@@ -305,8 +312,12 @@ class IngoGame {
         // Level Modal Next / Menu
         this.dom.levelModalNextBtn.addEventListener('click', () => {
             this.dom.levelModal.classList.remove('active');
-            if (this.currentDay < 54) {
-                this.loadDay(this.currentDay + 1, false);
+            if (!this.isPractice) {
+                // After completing X. Gün, move directly to X. Gün Alıştırma!
+                this.loadDay(this.currentDay, false, true);
+            } else if (this.currentDay < 54) {
+                // After completing X. Gün Alıştırma, move to (X+1). Gün!
+                this.loadDay(this.currentDay + 1, false, false);
             } else {
                 this.showLevelSelectModal();
             }
@@ -463,10 +474,13 @@ class IngoGame {
         window.addEventListener('beforeunload', () => this.saveState());
     }
 
-    // Load a Specific Day (Level) with seamless progress resume
-    loadDay(dayNum, resumeSaved = true) {
+    // Load a Specific Day (Level) with seamless progress resume and Practice (Alıştırma) mode support
+    loadDay(dayNum, resumeSaved = true, isPractice = false) {
         if (dayNum < 1 || dayNum > 54) dayNum = 1;
         this.currentDay = dayNum;
+        if (!resumeSaved) {
+            this.isPractice = Boolean(isPractice);
+        }
 
         const dayEntry = this.wordsData.find(d => d.day === dayNum);
         if (!dayEntry || !dayEntry.words || dayEntry.words.length === 0) {
@@ -519,6 +533,20 @@ class IngoGame {
         this.loadWord(this.wordIndex);
     }
 
+    toTrUpper(str) {
+        if (!str) return '';
+        return str
+            .replace(/i/g, 'İ')
+            .replace(/ı/g, 'I')
+            .replace(/ğ/g, 'Ğ')
+            .replace(/ü/g, 'Ü')
+            .replace(/ş/g, 'Ş')
+            .replace(/ö/g, 'Ö')
+            .replace(/ç/g, 'Ç')
+            .toUpperCase()
+            .replace(/[^A-ZÇĞİÖŞÜ]/g, '');
+    }
+
     // Load a Word within the current round
     loadWord(idx) {
         this.wordIndex = idx;
@@ -526,6 +554,7 @@ class IngoGame {
         this.isSolving = false;
         this.isPointerDown = false;
         this.lastVisitedCell = null;
+        this.lastPointerCell = null;
         this.selectedPath = [];
 
         if (this.dom.timeoutModal) this.dom.timeoutModal.classList.remove('active');
@@ -533,7 +562,13 @@ class IngoGame {
 
         this.saveState(); // Instantly persist progress!
         this.currentWord = this.roundWords[idx];
-        this.cleanWord = (this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase()).slice(0, 25);
+        if (this.isPractice) {
+            // Alıştırma Mode: player finds the Turkish word on the 5x5 grid!
+            this.cleanWord = (this.currentWord.cleanTrWord || this.toTrUpper(this.currentWord.trWord || this.currentWord.meaning)).slice(0, 25);
+        } else {
+            // Normal Mode: player finds the English word on the 5x5 grid!
+            this.cleanWord = (this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase()).slice(0, 25);
+        }
 
         this.updateHeaderUI();
         this.renderTargetWord();
@@ -541,7 +576,7 @@ class IngoGame {
         this.renderBoard();
         this.resetTimer();
 
-        // Auto pronounce word on load if speech enabled (delayed slightly on cold start so frame 1 stays fluid)
+        // Auto pronounce English word on load if speech enabled (delayed slightly on cold start so frame 1 stays fluid)
         if (this.settings.speech && window.sounds) {
             const wText = this.currentWord.displayWord || this.currentWord.word;
             if (this.isInitialLoad) {
@@ -560,7 +595,11 @@ class IngoGame {
     }
 
     updateHeaderUI() {
-        this.dom.wordCounter.textContent = `Kelime ${this.wordIndex + 1}`;
+        if (this.isPractice) {
+            this.dom.wordCounter.textContent = `${this.currentDay}. Gün Alıştırma • ${this.wordIndex + 1}/20`;
+        } else {
+            this.dom.wordCounter.textContent = `${this.currentDay}. Gün • Kelime ${this.wordIndex + 1}`;
+        }
         this.dom.roundPill.textContent = `Tur ${this.currentRound}/4`;
         this.updateCoinsUI();
     }
@@ -585,16 +624,20 @@ class IngoGame {
         }
         this.dom.targetWordLetters.appendChild(frag);
 
-        // Turkish meaning display: "= [Türkçe]"
         const posText = this.currentWord.pos ? `(${this.currentWord.pos}) ` : '';
-        this.dom.wordTrMeaning.textContent = `${posText}= ${this.currentWord.meaning || ''}`;
+        if (this.isPractice) {
+            // Alıştırma Mode: show ONLY the English word underneath (do NOT write Turkish here!)
+            this.dom.wordTrMeaning.textContent = `${posText}= ${this.currentWord.displayWord || this.currentWord.word}`;
+        } else {
+            // Normal Mode: show Turkish meaning underneath
+            this.dom.wordTrMeaning.textContent = `${posText}= ${this.currentWord.meaning || ''}`;
+        }
     }
 
     // Generate fresh randomized 5x5 board layout (Orthogonal only: Up, Down, Left, Right)
-    // "her tur aynı yerlerde olmasın" & "çapraz gitme olmasın"
+    // Flowing paths: straight lines, clean L-shapes, and wide S/Z sweeps without tight U-turns/clumping
     generateBoardLayout() {
         const L = this.cleanWord.length;
-        // Strictly orthogonal directions (no diagonals)
         const dirs = [
             [-1, 0], // Up
             [1, 0],  // Down
@@ -602,49 +645,109 @@ class IngoGame {
             [0, 1]   // Right
         ];
 
-        let foundPath = null;
+        // Choose a straightness momentum for this word so short words often go straight or make 1 clean L-turn
+        let targetStraightProb = 0.72;
+        if (L <= 5) {
+            const roll = Math.random();
+            if (roll < 0.32) targetStraightProb = 0.96;      // Pure straight line across row/col
+            else if (roll < 0.78) targetStraightProb = 0.74; // Clean L-turn
+            else targetStraightProb = 0.50;                  // Wide Z / stair shape
+        } else {
+            targetStraightProb = 0.62 + Math.random() * 0.22;
+        }
 
-        // Try up to 150 random DFS walks with strict iteration safety cap
-        for (let attempt = 0; attempt < 150; attempt++) {
+        let bestPath = null;
+        let bestScore = -999999;
+
+        for (let attempt = 0; attempt < 45; attempt++) {
             const startR = Math.floor(Math.random() * 5);
             const startC = Math.floor(Math.random() * 5);
             const path = [[startR, startC]];
-            const visited = new Set([`${startR},${startC}`]);
+            const visited = new Set([startR * 5 + startC]);
             let dfsOps = 0;
-            const MAX_DFS_OPS = 450;
+            const MAX_DFS_OPS = 350;
 
-            const dfs = (r, c, step) => {
+            const countVisitedNeighbors = (r, c) => {
+                let cnt = 0;
+                for (let i = 0; i < 4; i++) {
+                    const nr = r + dirs[i][0];
+                    const nc = c + dirs[i][1];
+                    if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && visited.has(nr * 5 + nc)) {
+                        cnt++;
+                    }
+                }
+                return cnt;
+            };
+
+            const dfs = (r, c, step, prevDr, prevDc) => {
                 if (step === L) return true;
                 if (++dfsOps > MAX_DFS_OPS) return false;
 
-                const neighbors = [];
-                for (const [dr, dc] of dirs) {
+                const candidates = [];
+                const wantStraight = Math.random() < targetStraightProb;
+
+                for (let i = 0; i < 4; i++) {
+                    const dr = dirs[i][0];
+                    const dc = dirs[i][1];
                     const nr = r + dr;
                     const nc = c + dc;
-                    if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && !visited.has(`${nr},${nc}`)) {
-                        neighbors.push([nr, nc]);
+                    const idx = nr * 5 + nc;
+                    if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && !visited.has(idx)) {
+                        // vTouch === 1 means ONLY the current cell touches (nr, nc) -> zero tight U-turns or folding back!
+                        const vTouch = countVisitedNeighbors(nr, nc);
+                        const isSameDir = (dr === prevDr && dc === prevDc);
+                        const clumpPenalty = (vTouch - 1) * 12;
+                        const dirScore = (step > 1 && isSameDir === wantStraight) ? 0 : 2.2;
+                        const priority = clumpPenalty + dirScore + Math.random();
+                        candidates.push({ nr, nc, dr, dc, idx, priority });
                     }
                 }
-                // Shuffle neighbor exploration
-                for (let i = neighbors.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
-                }
-                for (const [nr, nc] of neighbors) {
-                    visited.add(`${nr},${nc}`);
-                    path.push([nr, nc]);
-                    if (dfs(nr, nc, step + 1)) return true;
+
+                candidates.sort((a, b) => a.priority - b.priority);
+
+                for (let i = 0; i < candidates.length; i++) {
+                    const cand = candidates[i];
+                    visited.add(cand.idx);
+                    path.push([cand.nr, cand.nc]);
+                    if (dfs(cand.nr, cand.nc, step + 1, cand.dr, cand.dc)) return true;
                     path.pop();
-                    visited.delete(`${nr},${nc}`);
+                    visited.delete(cand.idx);
                 }
                 return false;
             };
 
-            if (dfs(startR, startC, 1)) {
-                foundPath = path;
-                break;
+            if (dfs(startR, startC, 1, 0, 0)) {
+                // Score candidate path by spread (bounding box span) and zero self-touching clumps
+                let minR = 5, maxR = -1, minC = 5, maxC = -1;
+                for (let i = 0; i < path.length; i++) {
+                    const pr = path[i][0], pc = path[i][1];
+                    if (pr < minR) minR = pr;
+                    if (pr > maxR) maxR = pr;
+                    if (pc < minC) minC = pc;
+                    if (pc > maxC) maxC = pc;
+                }
+                const span = (maxR - minR + 1) + (maxC - minC + 1);
+                let clumps = 0;
+                for (let i = 0; i < path.length; i++) {
+                    for (let j = i + 2; j < path.length; j++) {
+                        if (Math.abs(path[i][0] - path[j][0]) + Math.abs(path[i][1] - path[j][1]) === 1) {
+                            clumps++;
+                        }
+                    }
+                }
+
+                const score = span * 5 - clumps * 20;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestPath = path.map(pt => [pt[0], pt[1]]);
+                }
+                if (clumps === 0 && span >= Math.min(6, L + 1)) {
+                    break;
+                }
             }
         }
+
+        let foundPath = bestPath;
 
         // Fallback deterministic orthogonal snake if needed
         if (!foundPath) {
@@ -669,12 +772,30 @@ class IngoGame {
             this.grid[r][c] = this.cleanWord[i];
         }
 
-        // Fill remaining empty cells with weighted random distractor letters
-        const letterPool = "EEEEEEAAAATOOOIINNNSSSHHRRDDLLCCUUMMWWFFGGYYPPBBVK";
+        // Fill remaining empty cells with weighted random distractor letters (avoiding identical adjacent letters)
+        const letterPool = this.isPractice
+            ? "AAAAAEEEEİİİIIIOOOUUUÜÜÖÖKKKLLLMMNNNRRRSSŞŞTTTÇÇĞĞBBCCDDGGHHPPVVYYZZ"
+            : "EEEEEEAAAATOOOIINNNSSSHHRRDDLLCCUUMMWWFFGGYYPPBBVK";
         for (let r = 0; r < 5; r++) {
             for (let c = 0; c < 5; c++) {
                 if (this.grid[r][c] === null) {
-                    const randChar = letterPool[Math.floor(Math.random() * letterPool.length)];
+                    let randChar = letterPool[Math.floor(Math.random() * letterPool.length)];
+                    for (let tries = 0; tries < 8; tries++) {
+                        const candidate = letterPool[Math.floor(Math.random() * letterPool.length)];
+                        let conflict = false;
+                        for (let d = 0; d < 4; d++) {
+                            const nr = r + dirs[d][0];
+                            const nc = c + dirs[d][1];
+                            if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && this.grid[nr][nc] === candidate) {
+                                conflict = true;
+                                break;
+                            }
+                        }
+                        if (!conflict) {
+                            randChar = candidate;
+                            break;
+                        }
+                    }
                     this.grid[r][c] = randChar;
                 }
             }
@@ -1094,7 +1215,8 @@ class IngoGame {
         if (window.sounds) window.sounds.playFanfare();
 
         // 3 Stars & 50 Bonus Coins
-        this.dayStars[this.currentDay] = 3;
+        const starKey = this.isPractice ? `${this.currentDay}_p` : this.currentDay;
+        this.dayStars[starKey] = 3;
         this.addCoins(50);
 
         // Unlock next day if not already unlocked
@@ -1104,7 +1226,19 @@ class IngoGame {
 
         this.saveState();
 
-        this.dom.levelModalTitle.textContent = `🏆 ${this.currentDay}. Gün Tamamlandı!`;
+        if (this.isPractice) {
+            this.dom.levelModalTitle.textContent = `🏆 ${this.currentDay}. Gün Alıştırma Tamamlandı!`;
+            if (this.dom.levelModalNextBtn) {
+                this.dom.levelModalNextBtn.innerHTML = this.currentDay < 54
+                    ? `<span>Sonraki Gün (${this.currentDay + 1}. Gün)</span> ➔`
+                    : `<span>Seviye Seçimi</span> ➔`;
+            }
+        } else {
+            this.dom.levelModalTitle.textContent = `🏆 ${this.currentDay}. Gün Tamamlandı!`;
+            if (this.dom.levelModalNextBtn) {
+                this.dom.levelModalNextBtn.innerHTML = `<span>🎯 ${this.currentDay}. Gün Alıştırmaya Geç</span> ➔`;
+            }
+        }
         this.dom.levelModal.classList.add('active');
     }
 
@@ -1216,8 +1350,13 @@ class IngoGame {
         setTimeout(() => {
             if (this.dom.timeoutModalWord) {
                 const wName = this.currentWord ? (this.currentWord.displayWord || this.currentWord.word) : '';
+                const trTarget = this.currentWord ? (this.currentWord.trWord || this.currentWord.meaning) : '';
                 const trName = this.currentWord ? this.currentWord.meaning : '';
-                this.dom.timeoutModalWord.innerHTML = `<strong>${wName}</strong> (${trName})<br><br>Bu kelimeyi tekrar denemek ister misin?`;
+                if (this.isPractice) {
+                    this.dom.timeoutModalWord.innerHTML = `<strong>${wName}</strong> ➔ <strong>${trTarget}</strong> (${trName})<br><br>Bu kelimeyi tekrar denemek ister misin?`;
+                } else {
+                    this.dom.timeoutModalWord.innerHTML = `<strong>${wName}</strong> (${trName})<br><br>Bu kelimeyi tekrar denemek ister misin?`;
+                }
             }
             if (this.dom.timeoutModal) {
                 this.dom.timeoutModal.classList.add('active');
@@ -1245,34 +1384,54 @@ class IngoGame {
     renderLevelGrid() {
         const grid = this.dom.levelGrid;
         grid.innerHTML = '';
+        const frag = document.createDocumentFragment();
+
+        const formatStars = (stars, defaultLabel) => {
+            if (stars === 3) return '⭐⭐⭐';
+            if (stars === 2) return '⭐⭐☆';
+            if (stars === 1) return '⭐☆☆';
+            return defaultLabel;
+        };
 
         for (let d = 1; d <= 54; d++) {
             const isUnlocked = this.unlockedDays.includes(d);
-            const isCurrent = d === this.currentDay;
-            const stars = this.dayStars[d] || 0;
 
-            const btn = document.createElement('div');
-            btn.className = `level-card-btn ${isUnlocked ? 'unlocked' : 'locked'} ${isCurrent ? 'current' : ''}`;
-            
-            let starStr = '☆☆☆';
-            if (stars === 3) starStr = '⭐⭐⭐';
-            else if (stars === 2) starStr = '⭐⭐☆';
-            else if (stars === 1) starStr = '⭐☆☆';
-
-            btn.innerHTML = `
+            // 1) Normal Day Card (Left): Find English word
+            const isCurrentNormal = d === this.currentDay && !this.isPractice;
+            const starsNormal = this.dayStars[d] || 0;
+            const btnNormal = document.createElement('div');
+            btnNormal.className = `level-card-btn ${isUnlocked ? 'unlocked' : 'locked'} ${isCurrentNormal ? 'current' : ''}`;
+            btnNormal.innerHTML = `
                 <span class="level-number">${d}. Gün</span>
-                <span class="level-stars">${isUnlocked ? (stars > 0 ? starStr : '20 Kelime') : '🔒 Kilitli'}</span>
+                <span class="level-stars">${isUnlocked ? formatStars(starsNormal, 'İngilizce Bul') : '🔒 Kilitli'}</span>
             `;
-
             if (isUnlocked) {
-                btn.addEventListener('click', () => {
+                btnNormal.addEventListener('click', () => {
                     this.dom.levelSelectModal.classList.remove('active');
-                    this.loadDay(d, false);
+                    this.loadDay(d, false, false);
                 });
             }
+            frag.appendChild(btnNormal);
 
-            grid.appendChild(btn);
+            // 2) Practice (Alıştırma) Card (Right, side by side): Find Turkish word
+            const isCurrentPractice = d === this.currentDay && this.isPractice;
+            const starsPractice = this.dayStars[`${d}_p`] || 0;
+            const btnPractice = document.createElement('div');
+            btnPractice.className = `level-card-btn practice ${isUnlocked ? 'unlocked' : 'locked'} ${isCurrentPractice ? 'current' : ''}`;
+            btnPractice.innerHTML = `
+                <span class="level-number">${d}. Gün Alıştırma</span>
+                <span class="level-stars">${isUnlocked ? formatStars(starsPractice, 'Türkçe Bul') : '🔒 Kilitli'}</span>
+            `;
+            if (isUnlocked) {
+                btnPractice.addEventListener('click', () => {
+                    this.dom.levelSelectModal.classList.remove('active');
+                    this.loadDay(d, false, true);
+                });
+            }
+            frag.appendChild(btnPractice);
         }
+
+        grid.appendChild(frag);
     }
 
     showDictionaryModal() {
