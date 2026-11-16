@@ -576,10 +576,22 @@ class IngoGame {
         this.saveState(); // Instantly persist progress!
         this.currentWord = this.roundWords[idx];
         if (this.isPractice) {
-            // Alıştırma Mode: player finds the Turkish word on the 5x5 grid!
-            this.cleanWord = (this.currentWord.cleanTrWord || this.toTrUpper(this.currentWord.trWord || this.currentWord.meaning)).slice(0, 25);
+            // Alıştırma Mode: rotate through the word's Turkish meanings across Rounds 1..4 (wrapping modulo count)
+            const targets = this.currentWord.trTargets;
+            if (targets && targets.length > 0) {
+                this.currentPracticeTarget = targets[(this.currentRound - 1) % targets.length];
+                this.cleanWord = this.currentPracticeTarget.clean.slice(0, 25);
+            } else {
+                const fallbackTr = this.currentWord.trWord || this.currentWord.meaning;
+                this.currentPracticeTarget = {
+                    tr: fallbackTr,
+                    clean: this.currentWord.cleanTrWord || this.toTrUpper(fallbackTr)
+                };
+                this.cleanWord = this.currentPracticeTarget.clean.slice(0, 25);
+            }
         } else {
             // Normal Mode: player finds the English word on the 5x5 grid!
+            this.currentPracticeTarget = null;
             this.cleanWord = (this.currentWord.cleanWord || this.currentWord.word.replace(/[^A-Za-z]/g, '').toUpperCase()).slice(0, 25);
         }
 
@@ -679,7 +691,7 @@ class IngoGame {
     }
 
     // Generate fresh randomized 5x5 board layout (Orthogonal only: Up, Down, Left, Right)
-    // Balanced mix of straight lines, L-turns, and natural curves
+    // Interior-centered with varied curves, zig-zags, stairs, and occasional straight lines (avoids outer-edge hugging & repetitive L-shapes)
     generateBoardLayout() {
         const L = this.cleanWord.length;
         const dirs = [
@@ -688,23 +700,42 @@ class IngoGame {
             [0, -1], // Left
             [0, 1]   // Right
         ];
+        const isEdge = (r, c) => r === 0 || r === 4 || c === 0 || c === 4;
+        const isCorner = (r, c) => (r === 0 || r === 4) && (c === 0 || c === 4);
 
-        let targetStraightProb = 0.62;
+        let straightBias = 0.40;
+        let allowStraight = false;
         if (L <= 5) {
             const roll = Math.random();
-            if (roll < 0.25) targetStraightProb = 0.94;      // Occasional straight line
-            else if (roll < 0.65) targetStraightProb = 0.68; // L-turn / step
-            else targetStraightProb = 0.42;                  // Playful curve
+            if (roll < 0.14) {
+                straightBias = 0.96;
+                allowStraight = true;
+            } else if (roll < 0.35) {
+                straightBias = 0.55;
+            } else {
+                straightBias = 0.25; // Favors turns -> stairs/S/zig-zags instead of stiff L's
+            }
         } else {
-            targetStraightProb = 0.55 + Math.random() * 0.25;
+            straightBias = 0.32 + Math.random() * 0.25;
         }
 
         let bestPath = null;
         let bestScore = -999999;
 
-        for (let attempt = 0; attempt < 30; attempt++) {
-            const startR = Math.floor(Math.random() * 5);
-            const startC = Math.floor(Math.random() * 5);
+        for (let attempt = 0; attempt < 25; attempt++) {
+            let startR, startC;
+            if (allowStraight) {
+                startR = Math.random() < 0.5 ? (1 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 5);
+                startC = Math.random() < 0.5 ? (1 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 5);
+            } else if (Math.random() < (L <= 8 ? 0.72 : 0.55)) {
+                // Anchor inside the middle 3x3 most of the time so words don't hug the edges
+                startR = 1 + Math.floor(Math.random() * 3);
+                startC = 1 + Math.floor(Math.random() * 3);
+            } else {
+                startR = Math.floor(Math.random() * 5);
+                startC = Math.floor(Math.random() * 5);
+            }
+
             const path = [[startR, startC]];
             const visited = new Set([startR * 5 + startC]);
             let dfsOps = 0;
@@ -727,7 +758,7 @@ class IngoGame {
                 if (++dfsOps > MAX_DFS_OPS) return false;
 
                 const candidates = [];
-                const wantStraight = Math.random() < targetStraightProb;
+                const wantStraight = Math.random() < straightBias;
 
                 for (let i = 0; i < 4; i++) {
                     const dr = dirs[i][0];
@@ -736,12 +767,12 @@ class IngoGame {
                     const nc = c + dc;
                     const idx = nr * 5 + nc;
                     if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && !visited.has(idx)) {
-                        // Gentle preference against excessive clumping, while still allowing natural adjacent curves
                         const vTouch = countVisitedNeighbors(nr, nc);
                         const isSameDir = (dr === prevDr && dc === prevDc);
-                        const clumpPenalty = (vTouch - 1) * 2.5;
-                        const dirScore = (step > 1 && isSameDir === wantStraight) ? 0 : 1.8;
-                        const priority = clumpPenalty + dirScore + Math.random() * 1.4;
+                        const edgePen = allowStraight ? 0 : (isCorner(nr, nc) ? 1.0 : (isEdge(nr, nc) ? 0.45 : 0));
+                        const clumpPen = (vTouch - 1) * 1.3;
+                        const dirPen = (step > 1 && isSameDir === wantStraight) ? 0 : 1.5;
+                        const priority = edgePen + clumpPen + dirPen + Math.random() * 1.4;
                         candidates.push({ nr, nc, dr, dc, idx, priority });
                     }
                 }
@@ -760,30 +791,34 @@ class IngoGame {
             };
 
             if (dfs(startR, startC, 1, 0, 0)) {
-                let minR = 5, maxR = -1, minC = 5, maxC = -1;
+                let edgeCells = 0;
+                let cornerCells = 0;
+                let turns = 0;
                 for (let i = 0; i < path.length; i++) {
                     const pr = path[i][0], pc = path[i][1];
-                    if (pr < minR) minR = pr;
-                    if (pr > maxR) maxR = pr;
-                    if (pc < minC) minC = pc;
-                    if (pc > maxC) maxC = pc;
-                }
-                const span = (maxR - minR + 1) + (maxC - minC + 1);
-                let clumps = 0;
-                for (let i = 0; i < path.length; i++) {
-                    for (let j = i + 2; j < path.length; j++) {
-                        if (Math.abs(path[i][0] - path[j][0]) + Math.abs(path[i][1] - path[j][1]) === 1) {
-                            clumps++;
-                        }
+                    if (isEdge(pr, pc)) edgeCells++;
+                    if (isCorner(pr, pc)) cornerCells++;
+                    if (i >= 2) {
+                        const d1r = path[i - 1][0] - path[i - 2][0];
+                        const d1c = path[i - 1][1] - path[i - 2][1];
+                        const d2r = pr - path[i - 1][0];
+                        const d2c = pc - path[i - 1][1];
+                        if (d1r !== d2r || d1c !== d2c) turns++;
                     }
                 }
 
-                const score = span * 3 - clumps * 4 + Math.random() * 4;
+                if (allowStraight && turns === 0) {
+                    bestPath = path.map(pt => [pt[0], pt[1]]);
+                    break;
+                }
+
+                const lPenalty = (!allowStraight && L >= 4 && turns === 1) ? 2.0 : 0;
+                const score = -edgeCells * 1.1 - cornerCells * 1.4 - lPenalty + Math.random() * 1.8;
                 if (score > bestScore) {
                     bestScore = score;
                     bestPath = path.map(pt => [pt[0], pt[1]]);
                 }
-                if (attempt >= 8 && span >= Math.min(5, L)) {
+                if (attempt >= 8 && !(!allowStraight && turns === 1) && edgeCells <= Math.max(2, Math.floor(L / 2))) {
                     break;
                 }
             }
@@ -1391,7 +1426,9 @@ class IngoGame {
         setTimeout(() => {
             if (this.dom.timeoutModalWord) {
                 const wName = this.currentWord ? (this.currentWord.displayWord || this.currentWord.word) : '';
-                const trTarget = this.currentWord ? (this.currentWord.trWord || this.currentWord.meaning) : '';
+                const trTarget = this.currentPracticeTarget
+                    ? this.currentPracticeTarget.tr
+                    : (this.currentWord ? (this.currentWord.trWord || this.currentWord.meaning) : '');
                 const trName = this.currentWord ? this.currentWord.meaning : '';
                 if (this.isPractice) {
                     this.dom.timeoutModalWord.innerHTML = `<strong>${wName}</strong> ➔ <strong>${trTarget}</strong> (${trName})<br><br>Bu kelimeyi tekrar denemek ister misin?`;
