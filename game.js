@@ -691,7 +691,7 @@ class IngoGame {
     }
 
     // Generate fresh randomized 5x5 board layout (Orthogonal only: Up, Down, Left, Right)
-    // Interior-centered with varied curves, zig-zags, stairs, and occasional straight lines (avoids outer-edge hugging & repetitive L-shapes)
+    // Open, evenly spread paths across the full 5x5 board + realistic decoy letters from the active word
     generateBoardLayout() {
         const L = this.cleanWord.length;
         const dirs = [
@@ -703,37 +703,26 @@ class IngoGame {
         const isEdge = (r, c) => r === 0 || r === 4 || c === 0 || c === 4;
         const isCorner = (r, c) => (r === 0 || r === 4) && (c === 0 || c === 4);
 
+        const roll = Math.random();
+        const wantStraightMode = (L <= 5 && roll < 0.18);
         let straightBias = 0.40;
-        let allowStraight = false;
-        if (L <= 5) {
-            const roll = Math.random();
-            if (roll < 0.14) {
-                straightBias = 0.96;
-                allowStraight = true;
-            } else if (roll < 0.35) {
-                straightBias = 0.55;
-            } else {
-                straightBias = 0.25; // Favors turns -> stairs/S/zig-zags instead of stiff L's
-            }
-        } else {
-            straightBias = 0.32 + Math.random() * 0.25;
+        if (wantStraightMode) {
+            straightBias = 0.96;
+        } else if (roll < 0.42) {
+            straightBias = 0.62;
         }
 
         let bestPath = null;
         let bestScore = -999999;
 
-        for (let attempt = 0; attempt < 25; attempt++) {
-            let startR, startC;
-            if (allowStraight) {
-                startR = Math.random() < 0.5 ? (1 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 5);
-                startC = Math.random() < 0.5 ? (1 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 5);
-            } else if (Math.random() < (L <= 8 ? 0.72 : 0.55)) {
-                // Anchor inside the middle 3x3 most of the time so words don't hug the edges
-                startR = 1 + Math.floor(Math.random() * 3);
-                startC = 1 + Math.floor(Math.random() * 3);
-            } else {
+        for (let attempt = 0; attempt < 30; attempt++) {
+            // Spread starts evenly across the entire 5x5 grid (slightly less frequent in extreme corners)
+            let startR = 0;
+            let startC = 0;
+            while (true) {
                 startR = Math.floor(Math.random() * 5);
                 startC = Math.floor(Math.random() * 5);
+                if (!isCorner(startR, startC) || Math.random() < 0.4) break;
             }
 
             const path = [[startR, startC]];
@@ -767,12 +756,13 @@ class IngoGame {
                     const nc = c + dc;
                     const idx = nr * 5 + nc;
                     if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5 && !visited.has(idx)) {
+                        // Prevent curling into tight 2x2/2x3 clusters; allow edges naturally
                         const vTouch = countVisitedNeighbors(nr, nc);
                         const isSameDir = (dr === prevDr && dc === prevDc);
-                        const edgePen = allowStraight ? 0 : (isCorner(nr, nc) ? 1.0 : (isEdge(nr, nc) ? 0.45 : 0));
-                        const clumpPen = (vTouch - 1) * 1.3;
-                        const dirPen = (step > 1 && isSameDir === wantStraight) ? 0 : 1.5;
-                        const priority = edgePen + clumpPen + dirPen + Math.random() * 1.4;
+                        const clumpPen = (vTouch - 1) * 4.0;
+                        const cornerPen = isCorner(nr, nc) ? 0.7 : 0;
+                        const dirPen = (step > 1 && isSameDir === wantStraight) ? 0 : 1.4;
+                        const priority = clumpPen + cornerPen + dirPen + Math.random() * 1.3;
                         candidates.push({ nr, nc, dr, dc, idx, priority });
                     }
                 }
@@ -791,13 +781,18 @@ class IngoGame {
             };
 
             if (dfs(startR, startC, 1, 0, 0)) {
+                let minR = 5, maxR = -1, minC = 5, maxC = -1;
                 let edgeCells = 0;
-                let cornerCells = 0;
                 let turns = 0;
+                let clumps = 0;
+
                 for (let i = 0; i < path.length; i++) {
                     const pr = path[i][0], pc = path[i][1];
+                    if (pr < minR) minR = pr;
+                    if (pr > maxR) maxR = pr;
+                    if (pc < minC) minC = pc;
+                    if (pc > maxC) maxC = pc;
                     if (isEdge(pr, pc)) edgeCells++;
-                    if (isCorner(pr, pc)) cornerCells++;
                     if (i >= 2) {
                         const d1r = path[i - 1][0] - path[i - 2][0];
                         const d1c = path[i - 1][1] - path[i - 2][1];
@@ -805,20 +800,29 @@ class IngoGame {
                         const d2c = pc - path[i - 1][1];
                         if (d1r !== d2r || d1c !== d2c) turns++;
                     }
+                    for (let j = i + 2; j < path.length; j++) {
+                        if (Math.abs(pr - path[j][0]) + Math.abs(pc - path[j][1]) === 1) {
+                            clumps++;
+                        }
+                    }
                 }
 
-                if (allowStraight && turns === 0) {
+                if (wantStraightMode && turns === 0) {
                     bestPath = path.map(pt => [pt[0], pt[1]]);
                     break;
                 }
 
-                const lPenalty = (!allowStraight && L >= 4 && turns === 1) ? 2.0 : 0;
-                const score = -edgeCells * 1.1 - cornerCells * 1.4 - lPenalty + Math.random() * 1.8;
+                const span = (maxR - minR + 1) + (maxC - minC + 1);
+                const allOnOuterRim = (edgeCells === L);
+                const rimPen = allOnOuterRim ? 6.0 : (edgeCells * 0.35);
+                const lPenalty = (!wantStraightMode && L >= 4 && turns === 1) ? 1.5 : 0;
+                const score = span * 2.2 - clumps * 6.0 - rimPen - lPenalty + Math.random() * 1.5;
+
                 if (score > bestScore) {
                     bestScore = score;
                     bestPath = path.map(pt => [pt[0], pt[1]]);
                 }
-                if (attempt >= 8 && !(!allowStraight && turns === 1) && edgeCells <= Math.max(2, Math.floor(L / 2))) {
+                if (attempt >= 8 && clumps === 0 && !allOnOuterRim && span >= Math.min(6, L + 1)) {
                     break;
                 }
             }
@@ -849,14 +853,18 @@ class IngoGame {
             this.grid[r][c] = this.cleanWord[i];
         }
 
-        // Fill remaining empty cells with natural weighted random distractor letters
+        // Fill remaining cells (~25% decoy letters from active word + 75% weighted pool) so players can't guess by luck alone
         const letterPool = this.isPractice
             ? "AAAAAEEEEİİİIIIOOOUUUÜÜÖÖKKKLLLMMNNNRRRSSŞŞTTTÇÇĞĞBBCCDDGGHHPPVVYYZZ"
             : "EEEEEEAAAATOOOIINNNSSSHHRRDDLLCCUUMMWWFFGGYYPPBBVK";
         for (let r = 0; r < 5; r++) {
             for (let c = 0; c < 5; c++) {
                 if (this.grid[r][c] === null) {
-                    this.grid[r][c] = letterPool[Math.floor(Math.random() * letterPool.length)];
+                    if (Math.random() < 0.25 && L > 0) {
+                        this.grid[r][c] = this.cleanWord[Math.floor(Math.random() * L)];
+                    } else {
+                        this.grid[r][c] = letterPool[Math.floor(Math.random() * letterPool.length)];
+                    }
                 }
             }
         }

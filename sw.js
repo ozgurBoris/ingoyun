@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ingoyun-cache-v11';
+const CACHE_NAME = 'ingoyun-cache-v12';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
